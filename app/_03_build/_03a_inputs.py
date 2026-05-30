@@ -36,17 +36,17 @@ def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
     adm0_bounds: one row per country, the union of its ADM0 clip features — the clip
     boundary subdivided and applied in _03b.
     """
-    poly_url = _adm0_url("polygons")
+    url = clip_url()
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE adm0_wld AS
-        SELECT * EXCLUDE (geometry, geometry_bbox)
-        FROM read_parquet('{poly_url}')
+        SELECT * EXCLUDE (geometry)
+        FROM read_parquet('{url}')
         QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE adm0_bounds AS
         SELECT iso_3 AS iso3, ST_Union_Agg(geometry)::GEOMETRY AS geom
-        FROM read_parquet('{clip_url()}')
+        FROM read_parquet('{url}')
         GROUP BY iso_3
     """)
 

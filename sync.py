@@ -1,14 +1,11 @@
 """Sync output files to Cloudflare R2 via obstore."""
 
-import logging
 import os
 from pathlib import Path
 
 import obstore as obs
 from dotenv import load_dotenv
 from obstore.store import S3Store
-
-logger = logging.getLogger(__name__)
 
 cwd = Path(__file__).parent
 exts = ["json", "csv", "xlsx"]
@@ -50,20 +47,17 @@ def sync(src: Path, dest_prefix: str) -> None:
         if remote.get(rel) != size:
             key = f"{dest_prefix}/{rel}"
             obs.put(store, key, src / rel)
-            logger.info("uploaded: %s", key)
 
     for rel in remote:
         if rel not in local:
             key = f"{dest_prefix}/{rel}"
             obs.delete(store, key)
-            logger.info("deleted: %s", key)
 
 
 def copy(src: Path, dest_key: str) -> None:
     """Upload a single file to the given R2 key."""
     store = get_store()
     obs.put(store, dest_key, src)
-    logger.info("copied: %s", dest_key)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,9 @@
 """Insert COD and GeoBoundaries fallback sources into prepare.duckdb."""
 
-from logging import getLogger
-
 import duckdb
 import httpx
 
 from app.config import HTTP_TIMEOUT
-
-logger = getLogger(__name__)
 
 
 def load_fallback(
@@ -29,7 +25,6 @@ def load_fallback(
         url = f"{base_url}/{src_id}.parquet"
         if _insert_remote(conn, iso3, url, src_label, cols):
             inserted.add(iso3)
-    logger.info("%s: %s/%s countries inserted", src_label, len(inserted), len(todo))
     return inserted
 
 

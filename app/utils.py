@@ -41,6 +41,7 @@ def get_conn(
     conn.execute("SET enable_progress_bar = false")
     conn.execute("SET geometry_always_xy = true")
     conn.execute("SET preserve_insertion_order = false")
+    conn.execute("SET threads = 4")
     if app.config.DEBUG:
         return cast("DuckDBPyConnection", ProfiledConnection(conn))
     return conn

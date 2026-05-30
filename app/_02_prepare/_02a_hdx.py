@@ -1,7 +1,5 @@
 """Build prepare.duckdb's `admin` and `metadata` tables from the HDX Global GDB."""
 
-from logging import getLogger
-
 import duckdb
 
 from app._01_download.config import META_NAME
@@ -9,9 +7,6 @@ from app.config import HDX_DIR
 
 from .config import HDX_GDB_DIR, HDX_SRC_URL
 from .utils import load_metadata
-
-logger = getLogger(__name__)
-
 
 ADMIN_SCHEMA_SQL = """--sql
 CREATE OR REPLACE TABLE admin (
@@ -141,7 +136,6 @@ def _load_metadata_table(conn: duckdb.DuckDBPyConnection, metadata: dict) -> Non
         logger.warning("no HDX countries with valid src_lvl in metadata")
         return
     conn.executemany("INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    logger.info("metadata: %s HDX countries", len(rows))
 
 
 def _load_admin_table(conn: duckdb.DuckDBPyConnection) -> None:
@@ -172,5 +166,3 @@ def _load_admin_table(conn: duckdb.DuckDBPyConnection) -> None:
         JOIN metadata m ON m.iso3 = a.iso3
         WHERE m.src = 'hdx'
     """)
-    n = conn.execute("SELECT COUNT(*) FROM admin").fetchall()[0][0]
-    logger.info("admin: %s HDX rows inserted", n)

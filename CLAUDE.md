@@ -6,7 +6,7 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 
 ```text
 app/_01_download/    → fetch HDX GDB zip + metadata CSV to tmp/hdx/, extract GDB
-app/_02_prepare/     → ingest GDB + COD/GeoBoundaries fallbacks into tmp/app.duckdb
+app/_02_prepare/     → ingest GDB + COD/GeoBoundaries fallbacks into tmp/prepare.duckdb
 app/_03_build/       → build adm{0..4}_{polygons,lines,points} tables in tmp/build.duckdb
 app/_04_export/      → write GeoParquets, format conversions, area stats, and metadata indices
 sync.py              → rclone push to Cloudflare R2 (standalone, NOT invoked by pipeline)

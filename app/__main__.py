@@ -1,13 +1,10 @@
 """Pipeline entry point — runs the configured step(s) sequentially."""
 
 from argparse import ArgumentParser
-from logging import getLogger
 from os import getenv
 
 import app.config as _config
 from app import _01_download, _02_prepare, _03_build, _04_export
-
-logger = getLogger(__name__)
 
 _STEPS = (
     ("_01_download", _01_download.main),
@@ -29,12 +26,9 @@ _BOOL_VALS = ("YES", "ON", "TRUE", "1")
 def main() -> None:
     """Run the requested stage(s) of the admin-boundaries pipeline."""
     step = _parse()
-    logger.info("--step=%s --debug=%s", step or "all", _config.DEBUG)
     for name, fn in _STEPS:
         if step in (None, name):
-            logger.info("starting %s", name)
             fn()
-            logger.info("finished %s", name)
 
 
 def _parse() -> str | None:

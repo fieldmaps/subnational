@@ -1,13 +1,9 @@
 """Calculate area statistics from the global adm4 polygons and write Excel."""
 
-from logging import getLogger
-
 from app.config import EDGE_MATCHED_DIR, WLD
 from app.utils import get_conn
 
 from .config import AREA_CRS
-
-logger = getLogger(__name__)
 
 
 def main() -> None:
@@ -59,5 +55,3 @@ def main() -> None:
             sheet_name=f"area_{lvl}",
             index=False,
         )
-
-    logger.info("area stats written for %s", WLD)

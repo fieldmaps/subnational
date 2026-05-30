@@ -1,39 +1,34 @@
-"""Build edge-matched DuckDB tables globally from prepare.duckdb's admin table.
+"""Build edge-matched DuckDB tables from prepare.duckdb's admin table.
 
-Produces tmp/build.duckdb with 15 global tables: adm{0..4}_{polygons,lines,points}.
-All operations are vectorized SQL over the full admin table — no per-country
-iteration.
+Produces tmp/build.duckdb with 12 tables: adm{1..4}_{polygons,lines,points}. adm0
+is produced by a separate pipeline; here the ADM0 template is only the clip
+boundary. Polygons and interior lines are clipped and dissolved one country at a
+time — against the ADM0 boundary's individual single-part polygons, not the whole
+MultiPolygon, which OOMs DuckDB's GEOS layer on large coastlines.
 """
 
-from logging import getLogger
-
 import app.config
-from app.config import BUILD_DB, WLD
+from app.config import BUILD_DB
 from app.utils import export_debug_tables, get_conn
 
-from . import _01_inputs, _02_clip, _03_lines, _04_points, _05_attributes
-
-logger = getLogger(__name__)
+from . import _03a_inputs, _03b_clip, _03c_lines, _03d_points, _03e_attributes
 
 
 def main() -> None:
     """Run the global build stage end-to-end."""
-    logger.info("starting build (wld=%s)", WLD)
     conn = get_conn(BUILD_DB, reset=True)
 
-    _01_inputs.load_adm0_clip(conn)
-    _01_inputs.load_adm0_wld(conn)
-    _01_inputs.load_source(conn)
+    _03a_inputs.load_adm0(conn)
+    _03a_inputs.load_source(conn)
 
-    _02_clip.clip_and_aggregate(conn)
-    _03_lines.generate_lines(conn)
-    _04_points.generate_points(conn)
-    _05_attributes.main(conn)
+    _03b_clip.clip_and_aggregate(conn)
+    _03c_lines.generate_lines(conn)
+    _03d_points.generate_points(conn)
+    _03e_attributes.main(conn)
 
     if app.config.DEBUG:
         export_debug_tables(conn, "build")
     conn.close()
-    logger.info("build done")
 
 
 if __name__ == "__main__":

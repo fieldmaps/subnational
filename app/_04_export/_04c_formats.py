@@ -1,6 +1,5 @@
 """Convert global GeoParquets to GPKG, GDB, and XLSX via DuckDB's built-in GDAL."""
 
-from logging import getLogger
 from pathlib import Path
 from shutil import make_archive, rmtree
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -9,8 +8,6 @@ import duckdb
 
 from app.config import EDGE_MATCHED_DIR, GEOMS, WLD
 from app.utils import get_conn
-
-logger = getLogger(__name__)
 
 _GEOM_TYPE = {
     "polygons": "MULTIPOLYGON",
@@ -23,13 +20,12 @@ def main() -> None:
     """Generate GPKG, GDB, and XLSX for every (lvl, geom) combination."""
     conn = get_conn()
     out_dir = EDGE_MATCHED_DIR / WLD
-    for lvl in range(5):
+    for lvl in range(1, 5):
         for geom in GEOMS:
             parquet = out_dir / f"adm{lvl}_{geom}.parquet"
             if not parquet.exists():
                 continue
             _export_one(conn, parquet, geom)
-            logger.info("%s_adm%s_%s", WLD, lvl, geom)
     conn.close()
 
 

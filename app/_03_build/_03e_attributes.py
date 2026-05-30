@@ -1,22 +1,17 @@
 """Join world-view attributes from adm0_wld onto every adm{N}_{geom} table."""
 
-from logging import getLogger
-
 import duckdb
 
 from app.config import GEOMS
 
 from .utils import describe, wld_cols
 
-logger = getLogger(__name__)
-
 
 def main(conn: duckdb.DuckDBPyConnection) -> None:
-    """Apply world-view attributes to every adm{N}_{geom} table."""
-    for lvl in range(5):
+    """Apply world-view attributes to every adm{1..4}_{geom} table."""
+    for lvl in range(1, 5):
         for geom in GEOMS:
             _add_wld_attrs(conn, f"adm{lvl}_{geom}")
-    logger.info("attributes adm0..adm4")
 
 
 def _add_wld_attrs(conn: duckdb.DuckDBPyConnection, table: str) -> None:
@@ -41,5 +36,5 @@ def _add_wld_attrs(conn: duckdb.DuckDBPyConnection, table: str) -> None:
                {wld_select},
                a.geom
         FROM {table} a
-        LEFT JOIN adm0_wld b ON a.iso3 = b.iso3
+        LEFT JOIN adm0_wld b ON a.iso3 = b.iso_3
     """)

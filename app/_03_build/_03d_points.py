@@ -1,18 +1,14 @@
 """Generate centroid points for every admin level from the polygon tables."""
 
-from logging import getLogger
-
 import duckdb
 
 from .config import CENTROID_PRECISION
 from .utils import describe, src_id_cols, src_meta_cols
 
-logger = getLogger(__name__)
-
 
 def generate_points(conn: duckdb.DuckDBPyConnection) -> None:
-    """Build adm{0..4}_points as centroids of the corresponding polygons."""
-    for lvl in range(5):
+    """Build adm{1..4}_points as centroids of the corresponding polygons."""
+    for lvl in range(1, 5):
         poly = f"adm{lvl}_polygons"
         attrs = [
             c for c in src_id_cols(lvl) + src_meta_cols() if c in describe(conn, poly)
@@ -27,5 +23,3 @@ def generate_points(conn: duckdb.DuckDBPyConnection) -> None:
                    )::GEOMETRY AS geom
             FROM {poly}
         """)
-
-    logger.info("points adm0..adm4")

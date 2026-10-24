@@ -4,18 +4,18 @@ from argparse import ArgumentParser
 from os import getenv
 
 import app.config as _config
-from app import _01_download, _02_prepare, _03_build, _04_export
+from app import _01_sources, _02_publish, _03_build, _04_export
 
 _STEPS = (
-    ("_01_download", _01_download.main),
-    ("_02_prepare", _02_prepare.main),
+    ("_01_sources", _01_sources.main),
+    ("_02_publish", _02_publish.main),
     ("_03_build", _03_build.main),
     ("_04_export", _04_export.main),
 )
 
 _ALIASES = {
-    "download": "_01_download",
-    "prepare": "_02_prepare",
+    "sources": "_01_sources",
+    "publish": "_02_publish",
     "build": "_03_build",
     "export": "_04_export",
 }
@@ -37,7 +37,7 @@ def _parse() -> str | None:
         "--step",
         default=getenv("STEP"),
         choices=[name for name, _ in _STEPS] + list(_ALIASES),
-        metavar="{download,prepare,build,export}",
+        metavar="{sources,publish,build,export}",
         help="Run only the named stage (default: run all).",
     )
     parser.add_argument(
@@ -48,7 +48,14 @@ def _parse() -> str | None:
         const=True,
         help="Enable profiling and write parquet snapshots to tmp/.",
     )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        default=_config.PUSH,
+        help="Push catalog changes to source.coop after publish/export.",
+    )
     args = parser.parse_args()
+    _config.PUSH = args.push
     _config.DEBUG = args.debug or bool(args.step)
     return _ALIASES.get(args.step, args.step)
 

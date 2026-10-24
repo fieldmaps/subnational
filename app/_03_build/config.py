@@ -1,11 +1,11 @@
 """Configuration constants for the build stage."""
 
-ADM0_BASE = "https://data.fieldmaps.io/adm0/osm"
+from app.config import PKG_DIR
 
-CENTROID_PRECISION = 0.000001
+ADM0_BASE = "https://data.source.coop/fieldmaps/international"
+ADM0_LOCAL = PKG_DIR.parent.parent / "adm0-generator" / "catalog"
+ADM0_HUMANITARIAN = "odbl/humanitarian/adm0-polygons/adm0_polygons.parquet"
+ADM0_DISAGGREGATED = "odbl/disaggregated/adm0-polygons/adm0_polygons.parquet"
 
-# Clip-boundary subdivision (lossless): each country's ADM0 boundary is cut into a
-# grid of CLIP_CELL-degree pieces (see _03b) so no single GEOS clip ever sees a
-# multi-million-vertex coastline — DuckDB OOMs on that. The union of the pieces is
-# exactly the boundary; nothing is simplified.
-CLIP_CELL = 1.0
+CLIP_DROP = ("GEO", "SRB", "XJK")
+CLIP_ADD = ("GEO_1", "GEO_2", "GEO_3", "SRB_1", "SRB_2", "XKX", "XAK", "XSS", "XJK")

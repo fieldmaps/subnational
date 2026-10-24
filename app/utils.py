@@ -93,6 +93,7 @@ class ProfiledConnection:
             if parameters is not None
             else self._conn.execute(query)
         )
+        description = getattr(result, "description", None)
         rows = result.fetchall()
 
         stop.set()
@@ -109,7 +110,7 @@ class ProfiledConnection:
             after_ddb / 1e6,
             _query_label(query),
         )
-        return _EagerResult(rows)
+        return _EagerResult(rows, description)
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -122,8 +123,9 @@ class ProfiledConnection:
 class _EagerResult:
     """Materialised DuckDB result that survives subsequent execute() calls."""
 
-    def __init__(self, rows: list) -> None:
+    def __init__(self, rows: list, description=None) -> None:
         self._rows = rows
+        self._description = description
         self._idx = 0
 
     def fetchall(self) -> list:
@@ -135,6 +137,12 @@ class _EagerResult:
             self._idx += 1
             return row
         return None
+
+    def df(self):
+        import pandas as pd
+
+        cols = [d[0] for d in self._description] if self._description else None
+        return pd.DataFrame(self._rows, columns=cols)
 
 
 def export_debug_tables(

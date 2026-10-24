@@ -1,140 +1,105 @@
-"""Clip the source to the ADM0 boundary and dissolve up admin levels, per country.
+"""Clip per-iso3 inputs to the ADM0 boundary, fill down, and package every level."""
 
-Only adm{1..4} are produced; adm0 is out of scope. For each country the boundary
-(adm0_bounds) is grid-subdivided into small lossless pieces (btile) — the union of
-the pieces is exactly the boundary — and each source polygon is clipped against the
-pieces its bbox overlaps, then dissolved per level. Clipping against small pieces,
-and joining on scalar bbox predicates rather than ST_Intersects (which DuckDB plans
-as SPATIAL_JOIN, reserving ~1x RAM), keeps peak memory bounded with no simplification
-and runs fast on a single core.
-"""
-
-import math
+from pathlib import Path
+from shutil import rmtree
 
 import duckdb
+from topo_tools.api import edge_mosaic, package, schema_fill
 
-from .config import CLIP_CELL
-from .utils import describe, src_id_cols, src_meta_cols
+from app.config import PARQUET_OPTS, TMP_DIR
+
+from ._03a_inputs import input_paths
+
+CLIP_DIR = TMP_DIR / "build" / "clip"
+NAME_FIELD = "adm{n}_name"
+CODE_FIELD = "adm{n}_id"
 
 
-def clip_and_aggregate(conn: duckdb.DuckDBPyConnection) -> None:
-    """Build adm{1..4}_polygons one country at a time."""
-    src_cols = describe(conn, "src")
+def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
+    """Build adm{n}_{polygons,lines,points} for n >= 1; return the levels built."""
+    rmtree(CLIP_DIR, ignore_errors=True)
+    CLIP_DIR.mkdir(parents=True)
+    parent_path = CLIP_DIR / "parent.parquet"
+    conn.execute(f"""--sql
+        COPY (SELECT iso3, geom FROM adm0_bounds) TO '{parent_path}' {PARQUET_OPTS}
+    """)
 
-    for lvl in range(1, 5):
+    clipped_path = CLIP_DIR / "clipped.parquet"
+    edge_mosaic(
+        input_paths=input_paths("extended"),
+        overlay_path=parent_path,
+        output_path=clipped_path,
+        issues_path=CLIP_DIR / "clipped_issues.parquet",
+        original_paths=input_paths("original"),
+        match_column="iso3",
+        merge=True,
+        overlay_include=["iso3"],
+        input_exclude=["iso3"],
+        threads=4,
+        tmp_dir=CLIP_DIR,
+    )
+
+    filled_path = CLIP_DIR / "filled.parquet"
+    schema_fill(
+        input_path=_backfill_adm0_identity(conn, clipped_path),
+        output_path=filled_path,
+        name_field=NAME_FIELD,
+        code_field=CODE_FIELD,
+    )
+    # package_points rejects schema_fill's adm_lvl column, so drop it first.
+    package_input = CLIP_DIR / "package_input.parquet"
+    conn.execute(f"""--sql
+        COPY (SELECT * EXCLUDE (adm_lvl) FROM read_parquet('{filled_path}'))
+        TO '{package_input}' {PARQUET_OPTS}
+    """)
+    package(
+        package_input,
+        CLIP_DIR / "{x}.parquet",
+        name_field=NAME_FIELD,
+        code_field=CODE_FIELD,
+        threads=4,
+        tmp_dir=CLIP_DIR,
+    )
+
+    levels = sorted(
+        int(p.stem.removeprefix("admin")) for p in CLIP_DIR.glob("admin[1-9].parquet")
+    )
+    for lvl in levels:
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE adm{lvl}_polygons AS
-            SELECT iso3,
-                   {_attr_select(src_cols, lvl)},
-                   ST_Multi(ST_Union_Agg(geom))::GEOMETRY AS geom
-            FROM src
-            WHERE false
-            GROUP BY ALL
+            SELECT * RENAME (geometry AS geom)
+            FROM read_parquet('{CLIP_DIR / f"admin{lvl}.parquet"}')
         """)
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE adm{lvl}_points AS
+            SELECT * EXCLUDE (adm_lvl) RENAME (geometry AS geom)
+            FROM read_parquet('{CLIP_DIR / "points.parquet"}')
+            WHERE adm_lvl = {lvl}
+        """)
+        conn.execute(f"""--sql
+            CREATE OR REPLACE TABLE adm{lvl}_lines AS
+            SELECT * RENAME (geometry AS geom)
+            FROM read_parquet('{CLIP_DIR / "lines.parquet"}')
+            WHERE adm_lvl <= {lvl}
+        """)
+    return levels
 
-    rows = conn.execute("SELECT DISTINCT iso3 FROM src ORDER BY iso3").fetchall()
-    for (iso3,) in rows:
-        _process_country(conn, iso3, src_cols)
 
-
-def _process_country(
-    conn: duckdb.DuckDBPyConnection,
-    iso3: str,
-    src_cols: list[str],
-) -> None:
-    """Clip one country's source rows and append its adm{1..4}_polygons rows."""
-    conn.execute(
-        "CREATE OR REPLACE TEMP TABLE src_one AS SELECT * FROM src WHERE iso3 = ?",
-        [iso3],
-    )
-    conn.execute(
-        "CREATE OR REPLACE TEMP TABLE clip_one AS "
-        "SELECT geom FROM adm0_bounds WHERE iso3 = ?",
-        [iso3],
-    )
-    _subdivide_boundary(conn)
-
-    # Clip each source polygon against the boundary pieces its bbox overlaps (scalar
-    # bbox join → no SPATIAL_JOIN), then union the pieces back per source row.
-    conn.execute("""--sql
-        CREATE OR REPLACE TEMP TABLE src_clipped AS
-        SELECT s.* EXCLUDE (geom),
-               ST_Multi(ST_CollectionExtract(
-                   ST_Union_Agg(ST_Intersection(s.geom, b.geom)), 3
-               ))::GEOMETRY AS geom
-        FROM src_one s
-        JOIN btile b
-          ON ST_XMax(b.geom) >= ST_XMin(s.geom) AND ST_XMin(b.geom) <= ST_XMax(s.geom)
-         AND ST_YMax(b.geom) >= ST_YMin(s.geom) AND ST_YMin(b.geom) <= ST_YMax(s.geom)
-        GROUP BY ALL
+def _backfill_adm0_identity(
+    conn: duckdb.DuckDBPyConnection, clipped_path: Path
+) -> Path:
+    """Backfill adm0_id/_src/_name* from adm0_wld for gap-filled territories only."""
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE src_clipped AS
+        SELECT * FROM read_parquet('{clipped_path}')
     """)
-    for lvl in range(1, 5):
-        conn.execute(f"""--sql
-            INSERT INTO adm{lvl}_polygons
-            SELECT iso3,
-                   {_attr_select(src_cols, lvl)},
-                   ST_Multi(ST_Union_Agg(geom))::GEOMETRY AS geom
-            FROM src_clipped
-            WHERE adm{lvl}_id IS NOT NULL
-            GROUP BY ALL
-        """)
-
-
-def _subdivide_boundary(conn: duckdb.DuckDBPyConnection) -> None:
-    """Grid-subdivide clip_one's boundary into temp table btile, strip by strip.
-
-    Each vertical strip is one bounded ST_Intersection(boundary, strip_rect); the
-    strip (small) is split into row cells. Looping strips bounds peak memory to a
-    single strip rather than the whole multi-million-vertex boundary, losslessly.
-    """
-    bbox = conn.execute(
-        "SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) "
-        "FROM clip_one"
-    ).fetchone()
-    x0, y0, _x1, y1 = bbox or (0.0, 0.0, 0.0, 0.0)
-    ny = max(1, math.ceil((y1 - y0) / CLIP_CELL))
-
-    # Only the longitude cells that actually contain boundary, derived from the
-    # exploded part bboxes — skips empty ocean bands so antimeridian-spanning
-    # countries (USA/RUS, bbox ~360 wide) don't iterate hundreds of empty strips.
-    occupied = conn.execute(
-        f"""--sql
-        WITH parts AS (SELECT (UNNEST(ST_Dump(geom))).geom AS g FROM clip_one)
-        SELECT DISTINCT UNNEST(range(
-            CAST(floor((ST_XMin(g) - {x0}) / {CLIP_CELL}) AS INTEGER),
-            CAST(floor((ST_XMax(g) - {x0}) / {CLIP_CELL}) AS INTEGER) + 1
-        )) AS i
-        FROM parts
-        ORDER BY i
-        """
-    ).fetchall()
-
-    conn.execute("CREATE OR REPLACE TEMP TABLE btile (geom GEOMETRY)")
-    for (i,) in occupied:
-        sx0, sx1 = x0 + i * CLIP_CELL, x0 + (i + 1) * CLIP_CELL
-        conn.execute(f"""--sql
-            INSERT INTO btile
-            WITH strip AS (
-                SELECT ST_Intersection(
-                    geom, ST_MakeEnvelope({sx0}, {y0}, {sx1}, {y1})
-                ) AS g FROM clip_one
-            ),
-            gy AS (SELECT UNNEST(range({ny})) AS j)
-            SELECT geom FROM (
-                SELECT ST_Intersection(
-                    strip.g,
-                    ST_MakeEnvelope(
-                        {sx0}, {y0} + j * {CLIP_CELL},
-                        {sx1}, {y0} + (j + 1) * {CLIP_CELL}
-                    )
-                ) AS geom
-                FROM strip, gy
-                WHERE NOT ST_IsEmpty(strip.g)
-            ) WHERE NOT ST_IsEmpty(geom)
-        """)
-
-
-def _attr_select(src_cols: list[str], level: int) -> str:
-    """Return the comma-joined src ID/meta columns present in src for a level."""
-    attr_cols = [c for c in src_id_cols(level) + src_meta_cols() if c in src_cols]
-    return ", ".join(f'"{c}"' for c in attr_cols)
+    conn.execute("""--sql
+        UPDATE src_clipped SET
+            adm0_id = w.adm0_id, adm0_src = w.adm0_src, adm0_name = w.adm0_name,
+            adm0_name1 = w.adm0_name1, adm0_name2 = w.adm0_name2
+        FROM adm0_wld w
+        WHERE src_clipped.iso3 = w.iso_3 AND src_clipped.adm0_id IS NULL
+    """)
+    path = clipped_path.with_name("clipped_backfilled.parquet")
+    conn.execute(f"COPY src_clipped TO '{path}' {PARQUET_OPTS}")
+    return path

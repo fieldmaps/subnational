@@ -4,7 +4,15 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["duckdb", "httpx[http2]", "psutil"]
+dependencies = [
+    "duckdb",
+    "httpx[http2]",
+    "openpyxl",
+    "pandas",
+    "psutil",
+    "tenacity>=9.1.4",
+    "topo-tools>=0.17.0",
+]
 
 [dependency-groups]
 dev = ["obstore", "python-dotenv", "ruff"]

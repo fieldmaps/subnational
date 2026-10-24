@@ -27,7 +27,7 @@ def main() -> None:
         name = conn.execute(
             "SELECT any_value(adm0_name) FROM read_parquet(?)",
             [str(CATALOG_DIR / "extended" / key / f"{key}_extended.parquet")],
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         _add(row, "extended", key, f"{name} ({key.upper()})" if "_" in key else name)
         if base not in originals_done and row["via_original"]:
             originals_done.add(base)

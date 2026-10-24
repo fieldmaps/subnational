@@ -25,7 +25,9 @@ def main() -> None:
     df = conn.execute(f"""--sql
         SELECT
             {ids}, iso_3,
-            ST_Area(ST_Transform(geometry, 'EPSG:4326', '{AREA_CRS}')) / 1000000 AS area_km
+            ST_Area(
+                ST_Transform(geometry, 'EPSG:4326', '{AREA_CRS}', true)
+            ) / 1000000 AS area_km
         FROM read_parquet('{parquet}')
     """).df()
     conn.close()

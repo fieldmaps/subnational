@@ -33,7 +33,7 @@ def main() -> None:
     ensure_catalog()
     conn = get_conn(BUILD_DB, read_only=True)
     levels = build_levels(conn)
-    stamp = conn.execute("SELECT max(wld_date) FROM adm0_wld").fetchone()[0]
+    stamp = conn.execute("SELECT max(wld_date) FROM adm0_wld").fetchall()[0][0]
     conn.close()
     notes = _source_notes()
     write_metadata(

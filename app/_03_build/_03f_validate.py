@@ -24,7 +24,7 @@ def validate(conn: duckdb.DuckDBPyConnection, levels: list[int]) -> None:
 
         count = conn.execute(
             f"SELECT COUNT(*) FROM read_parquet('{issues_path}')"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
         if count:
             logger.warning(
                 "%s: %d topology issue(s), see %s", table, count, issues_path

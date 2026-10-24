@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import duckdb
-import httpx
+import httpx2
 from tenacity import (
     retry,
     retry_if_exception,
@@ -39,9 +39,9 @@ CREATE OR REPLACE TABLE admin (
 
 
 def _retryable(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.TransportError):
+    if isinstance(exc, httpx2.TransportError):
         return True
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.is_server_error
+    return isinstance(exc, httpx2.HTTPStatusError) and exc.response.is_server_error
 
 
 _retry = retry(
@@ -52,11 +52,11 @@ _retry = retry(
 )
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(
+def _client() -> httpx2.Client:
+    return httpx2.Client(
         http2=True,
         follow_redirects=True,
-        timeout=httpx.Timeout(HTTP_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT),
+        timeout=httpx2.Timeout(HTTP_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT),
     )
 
 

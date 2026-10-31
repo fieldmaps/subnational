@@ -69,7 +69,8 @@ def _source_notes() -> str:
     """Summarize source and SPDX license counts across the per-iso3 inputs."""
     conn = get_conn()
     rows = conn.execute(
-        f"SELECT src, src_lic, src_url FROM read_parquet('{SOURCES_TABLE}')"
+        f"SELECT src, src_lic, src_url FROM read_parquet('{SOURCES_TABLE}') "
+        "WHERE selected AND tier = 'extended'"
     ).fetchall()
     conn.close()
     srcs = Counter(src for src, _, _ in rows)
@@ -77,6 +78,6 @@ def _source_notes() -> str:
     src_text = ", ".join(f"{n} from {s}" for s, n in srcs.most_common())
     lic_text = "; ".join(f"{lic} ({n})" for lic, n in lics.most_common())
     return (
-        f"Built from per-iso3 layers in extended/ ({src_text}), edge-matched with "
+        f"Built from the per-iso3 extended layers ({src_text}), edge-matched with "
         f"topo-tools. Source licenses: {lic_text}."
     )

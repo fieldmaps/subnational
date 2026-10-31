@@ -8,7 +8,7 @@ from topo_tools.api import edge_mosaic, package, schema_fill
 
 from app.config import PARQUET_OPTS, TMP_DIR
 
-from ._03a_inputs import input_paths
+from ._03a_inputs import input_paths, stage_extended
 
 CLIP_DIR = TMP_DIR / "build" / "clip"
 NAME_FIELD = "adm{n}_name"
@@ -26,7 +26,7 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
 
     clipped_path = CLIP_DIR / "clipped.parquet"
     edge_mosaic(
-        input_paths=input_paths("extended"),
+        input_paths=stage_extended(conn),
         overlay_path=parent_path,
         output_path=clipped_path,
         issues_path=CLIP_DIR / "clipped_issues.parquet",

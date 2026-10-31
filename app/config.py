@@ -19,6 +19,13 @@ SOURCES_TABLE = TMP_DIR / "sources" / "sources.parquet"
 BUILD_DB = TMP_DIR / "build.duckdb"
 EDGE_MATCHED_DIR = OUTPUTS_DIR / "edge-matched"
 
+# Catalog source folders, highest build priority first.
+SOURCES = ("cod-ab", "erm", "cod-ab-legacy", "geoboundaries")
+# Per-iso3 src overriding SOURCES order, where it is deeper and matches Mapbox.
+PREFER = {"mda": "erm", "pol": "erm", "svk": "erm"}
+TIERS = ("extended", "original")
+MAX_LVL = 4
+
 GEOMS = ("polygons", "lines", "points")
 HTTP_TIMEOUT = 60
 WLD = os.getenv("WLD", "intl")

@@ -24,7 +24,7 @@ _BOOL_VALS = ("YES", "ON", "TRUE", "1")
 
 
 def main() -> None:
-    """Run the requested stage(s) of the admin-boundaries pipeline."""
+    """Run the requested stage(s) of the subnational pipeline."""
     step = _parse()
     for name, fn in _STEPS:
         if step in (None, name):

@@ -10,32 +10,48 @@ HOST = {
     "url": "https://fieldmaps.io",
 }
 
+# PMTiles max zoom; tylertoo "auto" stops at z7 for adm3, too coarse to inspect units.
+PMTILES_MAX_ZOOM = 10
 CATALOG_TITLE = "FieldMaps Subnational Administrative Boundaries"
 CATALOG_DESCRIPTION = (
     "Edge-matched admin level 1+ boundaries for every country and territory, "
     "always in the humanitarian world view, which groups disputed and autonomous "
     "areas with a neighbouring area. Built from OCHA COD-AB on Source Cooperative, "
-    "filled with legacy COD and geoBoundaries layers, and clipped to the OSM-based "
-    f"humanitarian admin 0 polygons of {INTERNATIONAL_URL}."
+    "filled with legacy COD and geoBoundaries layers, all backed up in this "
+    "catalog, and clipped to the OSM-based humanitarian admin 0 polygons of "
+    f"{INTERNATIONAL_URL}."
 )
 TIERS = {
-    "original": (
-        "Original source layers",
-        "The full-coverage layer selected per iso3, as published by its source.",
-    ),
-    "extended": (
-        "Extended source layers",
-        (
-            "The full-coverage layer selected per iso3, extended past its coastline "
-            "and mapped to the pipeline schema. These are the inputs to global/."
-        ),
-    ),
+    "original": "The layer with its source geometry, in the cod-ab schema",
+    "extended": "The layer extended past its coastline, in the cod-ab schema",
 }
-
 SRC_NAMES = {
-    "hdx": "OCHA COD-AB (Source Cooperative)",
-    "cod": "OCHA COD-AB (legacy FieldMaps copy)",
+    "cod-ab": "OCHA COD-AB (Source Cooperative)",
+    "erm": "EuroGeographics EuroRegionalMap",
+    "cod-ab-legacy": "OCHA COD-AB (legacy FieldMaps copy)",
     "geoboundaries": "geoBoundaries (legacy FieldMaps copy)",
+}
+SRC_DESCRIPTIONS = {
+    "erm": (
+        "EuroRegionalMap administrative units, one layer per country, ingested "
+        "from each yearly release. This dataset includes Intellectual Property "
+        "from European National Mapping and Cadastral Authorities and is licensed "
+        "on behalf of these by EuroGeographics. Original dataset is available for "
+        "free at https://www.mapsforeurope.org. Terms of the licence available at "
+        "https://www.mapsforeurope.org/licence."
+    ),
+    "cod-ab": (
+        "Backup of the latest full-coverage layer per iso3 from "
+        "https://source.coop/hdx/cod-ab, refreshed on every pipeline run."
+    ),
+    "cod-ab-legacy": (
+        "COD-AB layers migrated from FieldMaps' legacy copies, kept for iso3 "
+        "and extents not yet on source.coop/hdx/cod-ab."
+    ),
+    "geoboundaries": (
+        "geoBoundaries layers migrated from FieldMaps' legacy copies, used where "
+        "no COD-AB layer exists."
+    ),
 }
 
 SPDX = {

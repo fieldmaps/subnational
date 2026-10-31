@@ -1,7 +1,10 @@
 """Shared portolan helpers for the publish and export stages."""
 
 import json
+import os
+import shutil
 import subprocess
+from logging import getLogger
 from pathlib import Path
 
 from app.config import CATALOG_DIR
@@ -13,20 +16,28 @@ from .config import (
     CATALOG_URL,
     CONTACT,
     HOST,
+    PMTILES_MAX_ZOOM,
     SPDX,
 )
 
-_CONFIG_YAML = """conversion:
+logger = getLogger(__name__)
+
+_CONFIG_YAML = f"""conversion:
   vector:
     add_bbox: false
     sort: none
+pmtiles:
+  max_zoom: {PMTILES_MAX_ZOOM}
 """
+_LAUNCHER = Path(__file__).with_name("tylertoo_portolan.py")
 
 
 def portolan(*args: str, strict: bool = True) -> dict:
     """Run a portolan command in catalog/ and return its JSON envelope."""
+    # The launcher runs in portolan's tool env, found via its entry point shebang.
+    python = Path(shutil.which("portolan") or "portolan").read_text().split()[0][2:]
     result = subprocess.run(
-        ["portolan", "--format", "json", *args],
+        [python, str(_LAUNCHER), "--format", "json", *args],
         cwd=CATALOG_DIR,
         capture_output=True,
         text=True,
@@ -41,6 +52,23 @@ def portolan(*args: str, strict: bool = True) -> dict:
         msg = f"portolan {' '.join(args)} failed: {envelope['errors']}"
         raise RuntimeError(msg)
     return envelope
+
+
+def sync_catalog() -> None:
+    """Clone or pull catalog/ from PORTOLAN_REMOTE; skip when it is unset."""
+    remote = os.getenv("PORTOLAN_REMOTE")
+    if not remote:
+        logger.warning("PORTOLAN_REMOTE unset, using local catalog/ as is")
+        return
+    if (CATALOG_DIR / "catalog.json").exists():
+        portolan("pull", remote)
+        return
+    result = subprocess.run(
+        ["portolan", "clone", remote, str(CATALOG_DIR)], check=False, text=True
+    )
+    if result.returncode:
+        msg = f"portolan clone {remote} exited {result.returncode}"
+        raise RuntimeError(msg)
 
 
 def write_metadata(folder: Path, **fields: object) -> None:

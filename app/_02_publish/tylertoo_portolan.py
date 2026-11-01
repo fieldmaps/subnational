@@ -22,9 +22,22 @@ def _generate(
     """Tile one GeoParquet with tylertoo, matching portolan's generate_pmtiles."""
     with TemporaryDirectory() as tmp:
         overview = Path(tmp) / "overview.parquet"
-        tylertoo.overview(str(parquet_path), str(overview), max_zoom=max_zoom or "auto")
+        # Every boundary at every zoom: only sub-pixel simplification drops detail.
+        tylertoo.overview(
+            str(parquet_path),
+            str(overview),
+            max_zoom=max_zoom or "auto",
+            density_drop=False,
+            line_thinning=0,
+            line_visibility=0,
+            polygon_thinning=0,
+            polygon_visibility=0,
+        )
         tylertoo.export_pmtiles(
-            str(overview), str(pmtiles_path), layer_name=layer or parquet_path.stem
+            str(overview),
+            str(pmtiles_path),
+            layer_name=layer or parquet_path.stem,
+            tile_size_limit=None,
         )
 
 

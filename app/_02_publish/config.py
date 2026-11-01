@@ -11,7 +11,7 @@ HOST = {
 }
 
 # PMTiles max zoom; tylertoo "auto" stops at z7 for adm3, too coarse to inspect units.
-PMTILES_MAX_ZOOM = 10
+PMTILES_MAX_ZOOM = 12
 CATALOG_TITLE = "FieldMaps Subnational Administrative Boundaries"
 CATALOG_DESCRIPTION = (
     "Edge-matched admin level 1+ boundaries for every country and territory, "

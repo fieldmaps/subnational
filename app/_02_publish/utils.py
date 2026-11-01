@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.config import CATALOG_DIR
 
+from . import fieldmaps_publish
 from .config import (
     CATALOG_DESCRIPTION,
     CATALOG_ID,
@@ -36,22 +37,8 @@ def portolan(*args: str, strict: bool = True) -> dict:
     """Run a portolan command in catalog/ and return its JSON envelope."""
     # The launcher runs in portolan's tool env, found via its entry point shebang.
     python = Path(shutil.which("portolan") or "portolan").read_text().split()[0][2:]
-    result = subprocess.run(
-        [python, str(_LAUNCHER), "--format", "json", *args],
-        cwd=CATALOG_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        msg = f"portolan {' '.join(args)} exited {result.returncode}: {result.stderr}"
-        raise RuntimeError(msg) from e
-    if strict and not envelope["success"]:
-        msg = f"portolan {' '.join(args)} failed: {envelope['errors']}"
-        raise RuntimeError(msg)
-    return envelope
+    command = (python, str(_LAUNCHER))
+    return fieldmaps_publish.run(CATALOG_DIR, *args, strict=strict, command=command)
 
 
 def sync_catalog() -> None:

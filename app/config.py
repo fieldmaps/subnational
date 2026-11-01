@@ -3,8 +3,12 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PARQUET_OPTS = "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2)"
 os.environ["OGR_ORGANIZE_POLYGONS"] = "ONLY_CCW"
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 _BOOL_VALS = ("YES", "ON", "TRUE", "1")
 DEBUG: bool = os.getenv("DEBUG", "").upper() in _BOOL_VALS

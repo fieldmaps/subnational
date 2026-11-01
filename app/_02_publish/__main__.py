@@ -7,6 +7,7 @@ from app._01_sources.utils import catalog_path
 from app.config import CATALOG_DIR, SOURCES_TABLE
 from app.utils import get_conn
 
+from . import fieldmaps_publish
 from .config import HOST, SRC_DESCRIPTIONS, SRC_NAMES, TIERS
 from .utils import ensure_catalog, license_fields, portolan, write_metadata
 
@@ -37,8 +38,7 @@ def main() -> None:
     portolan("check", "--fix", "--metadata", strict=False)
     portolan("check", "--data-scope", "local")
     if app.config.PUSH:
-        portolan("push", "--dry-run")
-        portolan("push")
+        fieldmaps_publish.push(CATALOG_DIR)
 
 
 def _adm0_name(conn: duckdb.DuckDBPyConnection, group: list[dict]) -> str | None:

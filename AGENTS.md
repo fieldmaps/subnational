@@ -41,7 +41,7 @@ ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the loc
 - Use DuckDB (`ST_Read`, `COPY ... PARQUET_OPTS`) for reading and writing geodata; `gdal vector` only where DuckDB can't.
 - `catalog/.portolan/config.yaml` sets `add_bbox: false` and `sort: none` so `portolan add` keeps files as written, and `pmtiles.max_zoom: 12`.
 - portolan runs through `app/_02_publish/tylertoo_portolan.py`, which tiles `--pmtiles` with tylertoo; install with `uv tool install portolan-cli --with tylertoo`.
-- `app/_02_publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copy in fieldmaps/international.
+- `app/_02_publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copies in fieldmaps/international and OCHA-DAP/cod-site.
 - DuckDB built-in GDAL (`FORMAT GDAL`) handles GPKG/GDB/XLSX export.
 
 ## DuckDB Patterns

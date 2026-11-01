@@ -38,6 +38,10 @@ def portolan(*args: str, strict: bool = True) -> dict:
     # The launcher runs in portolan's tool env, found via its entry point shebang.
     python = Path(shutil.which("portolan") or "portolan").read_text().split()[0][2:]
     command = (python, str(_LAUNCHER))
+    if args and args[0] == "add":
+        return fieldmaps_publish.add(
+            CATALOG_DIR, *args[1:], strict=strict, command=command
+        )
     return fieldmaps_publish.run(CATALOG_DIR, *args, strict=strict, command=command)
 
 

@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 _BOOL_VALS = ("YES", "ON", "TRUE", "1")
 DEBUG: bool = os.getenv("DEBUG", "").upper() in _BOOL_VALS
 PUSH: bool = os.getenv("PUSH", "").upper() in _BOOL_VALS
+FORCE_PMTILES: bool = os.getenv("FORCE_PMTILES", "").upper() in _BOOL_VALS
 
 PKG_DIR = Path(__file__).parent
 TMP_DIR = PKG_DIR.parent / "tmp"

@@ -14,6 +14,11 @@ _GEOM_TYPE = {
     "lines": "MULTILINESTRING",
     "points": "POINT",
 }
+_GDB_VALID_TYPES = {
+    "polygons": "('POLYGON', 'MULTIPOLYGON')",
+    "lines": "('LINESTRING', 'MULTILINESTRING')",
+    "points": "('POINT', 'MULTIPOINT')",
+}
 
 
 def main() -> None:
@@ -46,11 +51,6 @@ def _export_one(conn: duckdb.DuckDBPyConnection, parquet: Path, geom: str) -> No
     gdb = parquet.with_suffix(".gdb")
     rmtree(gdb, ignore_errors=True)
     geom_type = _GEOM_TYPE[geom]
-    _GDB_VALID_TYPES = {
-        "polygons": "('POLYGON', 'MULTIPOLYGON')",
-        "lines": "('LINESTRING', 'MULTILINESTRING')",
-        "points": "('POINT', 'MULTIPOINT')",
-    }
     geom_filter = f"ST_GeometryType(geometry) IN {_GDB_VALID_TYPES[geom]}"
     conn.execute(f"""--sql
         COPY (

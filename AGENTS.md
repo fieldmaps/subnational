@@ -70,6 +70,7 @@ conn.execute(f"COPY (SELECT * FROM src) TO '{dest}' (FORMAT GDAL, DRIVER 'GPKG')
 uv sync
 uv run -m app
 uv run -m app --step sources
+uv run -m app --step publish --force-pmtiles   # rebuild every PMTiles after tiling settings change
 uv run ruff check && uv run ruff format
 ```
 

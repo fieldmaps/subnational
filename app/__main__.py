@@ -54,8 +54,15 @@ def _parse() -> str | None:
         default=_config.PUSH,
         help="Push catalog changes to source.coop after publish/export.",
     )
+    parser.add_argument(
+        "--force-pmtiles",
+        action="store_true",
+        default=_config.FORCE_PMTILES,
+        help="Rebuild every PMTiles during publish, even for unchanged parquets.",
+    )
     args = parser.parse_args()
     _config.PUSH = args.push
+    _config.FORCE_PMTILES = args.force_pmtiles
     _config.DEBUG = args.debug or bool(args.step)
     return _ALIASES.get(args.step, args.step)
 

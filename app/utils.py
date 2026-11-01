@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import duckdb
+import pandas as pd
 import psutil
 from duckdb import DuckDBPyConnection
 
@@ -123,7 +124,7 @@ class ProfiledConnection:
 class _EagerResult:
     """Materialised DuckDB result that survives subsequent execute() calls."""
 
-    def __init__(self, rows: list, description=None) -> None:
+    def __init__(self, rows: list, description: list | None = None) -> None:
         self._rows = rows
         self._description = description
         self._idx = 0
@@ -138,9 +139,7 @@ class _EagerResult:
             return row
         return None
 
-    def df(self):
-        import pandas as pd
-
+    def df(self) -> pd.DataFrame:
         cols = [d[0] for d in self._description] if self._description else None
         return pd.DataFrame(self._rows, columns=cols)
 

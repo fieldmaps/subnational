@@ -74,7 +74,9 @@ def _add(src: str, base: str, group: list[dict], title: str) -> None:
     stamps = [r["src_update"] or r["src_date"] for r in group]
     stamp = max((s for s in stamps if s), default=None)
     when = ["--datetime", str(stamp)[:10]] if stamp else []
-    portolan("add", f"{src}/{base}", "--pmtiles", *when)
+    # --force skips portolan's unchanged-file check, which otherwise skips tiling too.
+    force = ["--force", "--force-pmtiles"] if app.config.FORCE_PMTILES else []
+    portolan("add", f"{src}/{base}", "--pmtiles", *when, *force)
 
 
 if __name__ == "__main__":

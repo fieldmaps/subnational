@@ -139,6 +139,6 @@ def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def adm0_path(rel: str) -> str:
-    """Return the local adm0-generator catalog file if present, else its URL."""
+    """Return the local international catalog file if present, else its URL."""
     local = ADM0_LOCAL / rel
     return str(local) if local.exists() else f"{ADM0_BASE}/{rel}"

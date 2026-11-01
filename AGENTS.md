@@ -33,7 +33,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 `sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers and generates `adm{n}_id` from `adm{n}_pcode`.
 
-ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../adm0-generator/catalog`).
+ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`).
 
 ## Key Constraints
 

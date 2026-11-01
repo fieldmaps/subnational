@@ -1,24 +1,24 @@
 [project]
-name = "admin-boundaries"
+name = "subnational"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "httpx[http2]",
-    "pandas[performance,excel,sql-other]",
-    "psycopg[binary,pool]",
-    "psycopg2-binary",
-    "python-dotenv",
-    "tenacity",
-    "geopandas",
-    "pyarrow",
+    "duckdb>=2.0.0",
+    "httpx2[http2]>=2.16.0",
+    "openpyxl>=3.1.5",
+    "pandas>=3.1.0",
+    "psutil>=7.2.2",
+    "python-dotenv>=1.2.4",
+    "tenacity>=9.2.1",
+    "topo-tools>=0.18.0",
 ]
 
 [dependency-groups]
-dev = ["ruff", "taskipy"]
+dev = ["ruff>=0.17.2"]
 
-[tool.taskipy.tasks]
-app = "python -m app"
-export = "uv sync -q && uv export -q -o requirements.txt --no-dev --no-hashes"
-ruff = "ruff format && ruff check && ruff format"
+[tool.ruff]
+fix = true
+lint.select = ["ALL"]
+lint.ignore = ["COM812", "CPY001", "D203", "D213", "S603", "S607", "S608"]

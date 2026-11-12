@@ -10,7 +10,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.config import CATALOG_DIR, HTTP_TIMEOUT
+from app.config import HTTP_TIMEOUT, SOURCES_DIR
 
 from .config import DOWNLOAD_CHUNK_SIZE, HTTP_CONNECT_TIMEOUT
 
@@ -65,14 +65,14 @@ def download(url: str, dest: Path, size: int | None = None) -> Path:
     return dest
 
 
-def catalog_path(src: str, tier: str, key: str) -> Path:
-    """Return catalog/{src}/{base}/{key}_{tier}.parquet, creating its folder."""
-    path = CATALOG_DIR / src / key.split("_", maxsplit=1)[0] / f"{key}_{tier}.parquet"
+def source_path(src: str, tier: str, key: str) -> Path:
+    """Return sources/{src}/{base}/{key}_{tier}.parquet, creating its folder."""
+    path = SOURCES_DIR / src / key.split("_", maxsplit=1)[0] / f"{key}_{tier}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def meta_path(src: str, key: str) -> Path:
-    """Return the collection's {base}_metadata.json sidecar path."""
+def source_meta_path(src: str, key: str) -> Path:
+    """Return the source folder's {base}_metadata.json sidecar path."""
     base = key.split("_", maxsplit=1)[0]
-    return catalog_path(src, "original", base).with_name(f"{base}_metadata.json")
+    return source_path(src, "original", base).with_name(f"{base}_metadata.json")

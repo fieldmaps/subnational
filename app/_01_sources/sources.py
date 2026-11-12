@@ -1,14 +1,14 @@
-"""Index every catalog collection's metadata sidecar into the sources table."""
+"""Index every source folder's metadata sidecar into the sources table."""
 
 import duckdb
 
-from app.config import CATALOG_DIR, PREFER, SOURCES, SOURCES_TABLE
+from app.config import PREFER, SOURCES, SOURCES_DIR, SOURCES_TABLE
 
 from .schema import META_COLS
 
 
 def build_sources_table(conn: duckdb.DuckDBPyConnection) -> None:
-    """Write SOURCES_TABLE: one row per (src, tier, key), `selected` by priority.
+    """Write SOURCES_TABLE and sources/sources.csv: one row per (src, tier, key).
 
     Each base iso3 is built from its PREFER or highest-priority SOURCES src; every key
     of that src (e.g. pak_1, pak_2) is selected.
@@ -24,7 +24,7 @@ def build_sources_table(conn: duckdb.DuckDBPyConnection) -> None:
                 FROM (
                     SELECT unnest(rows, recursive := true)
                     FROM read_json(
-                        '{CATALOG_DIR}/*/*/*_metadata.json',
+                        '{SOURCES_DIR}/*/*/*_metadata.json',
                         columns = {{'rows': '{row}[]'}}
                     )
                 )
@@ -43,4 +43,11 @@ def build_sources_table(conn: duckdb.DuckDBPyConnection) -> None:
             LEFT JOIN best USING (base, src)
             ORDER BY src, tier, key
         ) TO '{SOURCES_TABLE}'
+    """)
+    conn.execute(f"""--sql
+        COPY (
+            SELECT * EXCLUDE (selected), selected
+            FROM read_parquet('{SOURCES_TABLE}')
+            ORDER BY base, NOT selected, src, key, tier
+        ) TO '{SOURCES_DIR / "sources.csv"}'
     """)

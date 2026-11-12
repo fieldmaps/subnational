@@ -19,7 +19,7 @@ from .config import (
     SRC,
 )
 from .schema import conform, write_meta
-from .utils import catalog_path, download, get_json, meta_path
+from .utils import download, get_json, source_meta_path, source_path
 
 logger = getLogger(__name__)
 
@@ -28,7 +28,7 @@ _LANGS = ("src_lang", "src_lang1", "src_lang2")
 
 
 def load_hdx(conn: duckdb.DuckDBPyConnection) -> None:
-    """Write catalog/cod-ab/{iso3}/ with both tiers and its metadata sidecar."""
+    """Write sources/cod-ab/{iso3}/ with both tiers and its metadata sidecar."""
     metadata = _load_metadata(conn)
     catalog = _sc_json("extended/catalog.json")
     iso3s = sorted(
@@ -63,11 +63,11 @@ def load_hdx(conn: duckdb.DuckDBPyConnection) -> None:
             conn,
             f"SELECT * FROM read_parquet('{ext}')",
             lvl,
-            catalog_path(SRC, "extended", key),
+            source_path(SRC, "extended", key),
         )
         orig_coll = _sc_json(f"original/{layer}/collection.json")
         orig = _fetch(orig_coll, f"original/{layer}", "original")
-        _write_original(conn, orig, lvl, catalog_path(SRC, "original", key))
+        _write_original(conn, orig, lvl, source_path(SRC, "original", key))
         langs = conn.execute(
             f"SELECT any_value(lang), any_value(lang1), any_value(lang2) "
             f"FROM read_parquet('{ext}')"
@@ -75,13 +75,13 @@ def load_hdx(conn: duckdb.DuckDBPyConnection) -> None:
         row |= dict(zip(_LANGS, langs, strict=True))
         for tier in _TIERS:
             row |= {"tier": tier, "via": f"{SC_URL}/{tier}/{layer}"}
-            write_meta(row, meta_path(SRC, key))
+            write_meta(row, source_meta_path(SRC, key))
 
 
 def _is_current(key: str, row: dict, layer: str) -> bool:
     """Return whether both tiers exist and the sidecar already holds this row."""
-    path = meta_path(SRC, key)
-    if not path.exists() or not all(catalog_path(SRC, t, key).exists() for t in _TIERS):
+    path = source_meta_path(SRC, key)
+    if not path.exists() or not all(source_path(SRC, t, key).exists() for t in _TIERS):
         return False
     have = {r["tier"]: r for r in json.loads(path.read_text())["rows"]}
     for tier in _TIERS:

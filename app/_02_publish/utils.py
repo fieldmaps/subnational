@@ -19,6 +19,7 @@ from .config import (
     CATALOG_URL,
     CONTACT,
     HOST,
+    LICENSE_URLS,
     PMTILES_MAX_ZOOM,
     SPDX,
 )
@@ -75,14 +76,10 @@ def _tile(parquet: Path, pmtiles: Path) -> None:
         )
 
 
-def sync_catalog() -> None:
-    """Clone or pull catalog/ from PORTOLAN_REMOTE; skip when it is unset."""
+def clone_catalog() -> None:
+    """Clone catalog/ from PORTOLAN_REMOTE when it is missing locally."""
     remote = os.getenv("PORTOLAN_REMOTE")
-    if not remote:
-        logger.warning("PORTOLAN_REMOTE unset, using local catalog/ as is")
-        return
-    if (CATALOG_DIR / "catalog.json").exists():
-        portolan("pull", remote)
+    if (CATALOG_DIR / "catalog.json").exists() or not remote:
         return
     result = subprocess.run(
         ["portolan", "clone", remote, str(CATALOG_DIR)], check=False, text=True
@@ -121,18 +118,20 @@ def stale_collections() -> set[str]:
 
 
 def license_fields(src_lic: str | None, src_url: str | None) -> dict:
-    """Map a source license string to SPDX, or `other` linking to the source."""
+    """Map a source license string to SPDX, or `other` linking to its terms."""
     spdx = SPDX.get(src_lic or "")
     if spdx:
         return {
             "license": spdx,
             "license_url": f"https://spdx.org/licenses/{spdx}.html",
         }
-    return {"license": "other", "license_url": src_url or CATALOG_URL}
+    url = LICENSE_URLS.get(src_lic or "") or src_url or CATALOG_URL
+    return {"license": "other", "license_url": url}
 
 
 def ensure_catalog() -> None:
-    """Initialize catalog/ once, then rewrite its root config and metadata."""
+    """Clone or initialize catalog/ once, then rewrite its root config and metadata."""
+    clone_catalog()
     if not (CATALOG_DIR / "catalog.json").exists():
         CATALOG_DIR.mkdir(parents=True, exist_ok=True)
         portolan(

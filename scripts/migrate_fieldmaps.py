@@ -1,4 +1,4 @@
-"""One-time copy of data.fieldmaps.io COD and geoBoundaries layers into catalog/.
+"""One-time copy of data.fieldmaps.io COD and geoBoundaries layers into sources/.
 
 Run: uv run python -m scripts.migrate_fieldmaps [--keys alb,pak_1] [--skip-publish]
 """
@@ -14,7 +14,7 @@ from app import _02_publish
 from app._01_sources.config import DOWNLOAD_DIR
 from app._01_sources.schema import conform, write_meta
 from app._01_sources.sources import build_sources_table
-from app._01_sources.utils import catalog_path, download, get_json, meta_path
+from app._01_sources.utils import download, get_json, source_meta_path, source_path
 from app._03_build._03a_inputs import adm0_path
 from app._03_build.config import ADM0_HUMANITARIAN
 from app.utils import get_conn
@@ -35,7 +35,7 @@ _LANG_KEYS = ("src_lang", "src_lang1", "src_lang2")
 
 
 def main() -> None:
-    """Migrate every legacy entry (or --keys) into catalog/{src}/{base}/."""
+    """Migrate every legacy entry (or --keys) into sources/{src}/{base}/."""
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--keys", type=lambda v: set(v.split(",")), default=None)
     parser.add_argument("--skip-publish", action="store_true")
@@ -120,10 +120,10 @@ def _migrate_extended(
         conn,
         f"SELECT {select}, geometry FROM read_parquet('{raw}')",
         lvl,
-        catalog_path(src, "extended", key),
+        source_path(src, "extended", key),
     )
     meta = _meta(src, "extended", key, entry, url)
-    write_meta(meta, meta_path(src, key))
+    write_meta(meta, source_meta_path(src, key))
 
 
 def _migrate_original(
@@ -155,11 +155,11 @@ def _migrate_original(
         conn,
         f"SELECT {select}, geom AS geometry FROM ({query})",
         lvl,
-        catalog_path(src, "original", base),
+        source_path(src, "original", base),
     )
     meta = _meta(src, "original", base, entry, entry["o_gpkg"])
     meta["src_lvl"] = lvl
-    write_meta(meta, meta_path(src, base))
+    write_meta(meta, source_meta_path(src, base))
 
 
 def _original_columns(

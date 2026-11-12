@@ -4,7 +4,7 @@ import duckdb
 from topo_tools.api import code_create, topo_clean
 
 from app._01_sources.schema import columns
-from app._01_sources.utils import catalog_path
+from app._01_sources.utils import source_path
 from app.config import MAX_LVL, PARQUET_OPTS, SOURCES_TABLE, TMP_DIR
 
 from .config import (
@@ -38,7 +38,7 @@ _META = (
 
 def input_paths(tier: str) -> list[str]:
     """Return the selected {tier} parquet paths, sorted by key."""
-    return [str(catalog_path(src, tier, key)) for src, key in _selected(tier)]
+    return [str(source_path(src, tier, key)) for src, key in _selected(tier)]
 
 
 def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
@@ -55,7 +55,7 @@ def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
             [src, key],
         ).fetchall()[0]
         meta = dict(zip(_META, row, strict=True))
-        path = catalog_path(src, "extended", key)
+        path = source_path(src, "extended", key)
         stamp = (
             conn.execute(
                 f"SELECT max(CAST(valid_on AS DATE)) FROM read_parquet('{path}')"

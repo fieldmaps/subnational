@@ -16,10 +16,16 @@ CATALOG_TITLE = "FieldMaps Subnational Administrative Boundaries"
 CATALOG_DESCRIPTION = (
     "Edge-matched admin level 1+ boundaries for every country and territory, "
     "always in the humanitarian world view, which groups disputed and autonomous "
-    "areas with a neighbouring area. Built from OCHA COD-AB on Source Cooperative, "
-    "filled with legacy COD and geoBoundaries layers, all backed up in this "
-    "catalog, and clipped to the OSM-based humanitarian admin 0 polygons of "
-    f"{INTERNATIONAL_URL}."
+    "areas with a neighbouring area. Built from one layer per iso3 (OCHA COD-AB "
+    "on Source Cooperative, filled with EuroRegionalMap, legacy COD and "
+    "geoBoundaries layers), published under iso3/, and clipped to the OSM-based "
+    f"humanitarian admin 0 polygons of {INTERNATIONAL_URL}."
+)
+ISO3_TITLE = "Subnational boundaries by ISO3"
+ISO3_DESCRIPTION = (
+    "One collection per ISO3 country or area: the layer the global build uses, "
+    "taken from OCHA COD-AB where available, else EuroRegionalMap, legacy COD, "
+    "or geoBoundaries."
 )
 TIERS = {
     "original": "The layer with its source geometry, in the cod-ab schema",
@@ -31,26 +37,14 @@ SRC_NAMES = {
     "cod-ab-legacy": "OCHA COD-AB (legacy FieldMaps copy)",
     "geoboundaries": "geoBoundaries (legacy FieldMaps copy)",
 }
-SRC_DESCRIPTIONS = {
+# Attribution each collection of that src must carry.
+SRC_NOTICES = {
     "erm": (
-        "EuroRegionalMap administrative units, one layer per country, ingested "
-        "from each yearly release. This dataset includes Intellectual Property "
+        "This dataset includes Intellectual Property "
         "from European National Mapping and Cadastral Authorities and is licensed "
         "on behalf of these by EuroGeographics. Original dataset is available for "
         "free at https://www.mapsforeurope.org. Terms of the licence available at "
         "https://www.mapsforeurope.org/licence."
-    ),
-    "cod-ab": (
-        "Backup of the latest full-coverage layer per iso3 from "
-        "https://source.coop/hdx/cod-ab, refreshed on every pipeline run."
-    ),
-    "cod-ab-legacy": (
-        "COD-AB layers migrated from FieldMaps' legacy copies, kept for iso3 "
-        "and extents not yet on source.coop/hdx/cod-ab."
-    ),
-    "geoboundaries": (
-        "geoBoundaries layers migrated from FieldMaps' legacy copies, used where "
-        "no COD-AB layer exists."
     ),
 }
 
@@ -74,4 +68,8 @@ SPDX = {
     "Open Government Licence v3.0": "OGL-UK-3.0",
     "Open Data Commons Public Domain Dedication and License (PDDL) v1.0": "PDDL-1.0",
     "Data license Germany - Attribution - Version 2.0": "DL-DE-BY-2.0",
+}
+# Terms page of each non-SPDX license, else the source page is linked.
+LICENSE_URLS = {
+    "EuroGeographics Open Data Licence 2024": "https://www.mapsforeurope.org/licence",
 }

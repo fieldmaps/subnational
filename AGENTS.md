@@ -5,19 +5,19 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 ## Pipeline Stages
 
 ```text
-app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), back up cod-ab into catalog/cod-ab/, write tmp/sources/sources.parquet
-app/_02_publish/     → register every catalog/{src}/{base} collection with portolan (--push uploads)
+app/_01_sources/     → back up cod-ab into sources/cod-ab/, write tmp/sources/sources.parquet
+app/_02_publish/     → clone catalog/ from PORTOLAN_REMOTE if missing, copy each base iso3's selected layers into catalog/iso3/{base}/ and register them with portolan (--push uploads)
 app/_03_build/       → code the selected extended layers (topo-tools code-create), edge-mosaic to the world-view ADM0, package and validate into tmp/build.duckdb
 app/_04_export/      → write catalog/global/admin{n}/admin{n}{,_points,_lines}.parquet and register them with portolan (--push uploads)
-scripts/migrate_fieldmaps.py → one-time copy of data.fieldmaps.io layers into catalog/ (delete after migration)
-scripts/ingest_erm.py → yearly EuroGeographics ERM release into catalog/erm/ (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
+scripts/migrate_fieldmaps.py → one-time copy of data.fieldmaps.io layers into sources/ (delete after migration)
+scripts/ingest_erm.py → yearly EuroGeographics ERM release into sources/erm/ (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
 ```
 
 Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step sources` (or `publish`, `build`, `export`); also honors `STEP` env var.
 
 ## Catalog and Sources
 
-`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational`. It backs up every upstream layer as one collection per source and base iso3, `catalog/{src}/{base}/`:
+`sources/` (local only, never pushed) backs up every upstream layer, one folder per source and base iso3, `sources/{src}/{base}/`:
 
 - `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). Multi-extent keys (`pak_1_extended`, `pak_2_extended`) sit beside the single `{base}_original.parquet`.
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`), the only record of it.
@@ -31,7 +31,9 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 | 3           | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | migrated once                    |
 | 4           | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | migrated once                    |
 
-`sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
+`sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers from `sources/` and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
+
+`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational`, with two sub-catalogs: `iso3/{base}/` holds the selected src's layers and sidecar for each base iso3 (collection description names the src), and `global/admin{n}/` holds the export.
 
 ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`).
 

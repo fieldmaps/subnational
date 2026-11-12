@@ -20,11 +20,12 @@ TMP_DIR = PKG_DIR.parent / "tmp"
 OUTPUTS_DIR = PKG_DIR.parent / "outputs"
 
 CATALOG_DIR = PKG_DIR.parent / "catalog"
+SOURCES_DIR = PKG_DIR.parent / "sources"
 SOURCES_TABLE = TMP_DIR / "sources" / "sources.parquet"
 BUILD_DB = TMP_DIR / "build.duckdb"
 EDGE_MATCHED_DIR = OUTPUTS_DIR / "edge-matched"
 
-# Catalog source folders, highest build priority first.
+# Source folders, highest build priority first.
 SOURCES = ("cod-ab", "erm", "cod-ab-legacy", "geoboundaries")
 # Per-iso3 src overriding SOURCES order, where it is deeper and matches Mapbox.
 PREFER = {"mda": "erm", "pol": "erm", "svk": "erm"}

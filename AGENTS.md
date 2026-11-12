@@ -54,7 +54,9 @@ conn.execute("LOAD spatial;")
 conn.execute(f"CREATE TABLE src AS SELECT * FROM read_parquet('{path}')")
 
 # Glob-merge (union_by_name handles column differences)
-conn.execute(f"CREATE TABLE merged AS SELECT * FROM read_parquet('{dir}/*.parquet', union_by_name=true)")
+conn.execute(
+    f"CREATE TABLE merged AS SELECT * FROM read_parquet('{dir}/*.parquet', union_by_name=true)"
+)
 
 # Write GeoParquet (PARQUET_OPTS defined in app/config.py)
 PARQUET_OPTS = "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2)"

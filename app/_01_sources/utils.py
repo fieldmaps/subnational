@@ -31,7 +31,6 @@ _retry = retry(
 
 def _client() -> httpx2.Client:
     return httpx2.Client(
-        http2=True,
         follow_redirects=True,
         timeout=httpx2.Timeout(HTTP_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT),
     )

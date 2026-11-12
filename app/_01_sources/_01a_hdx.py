@@ -1,5 +1,6 @@
 """Back up each iso3's full-coverage layer from source.coop/hdx/cod-ab."""
 
+import json
 from logging import getLogger
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from .config import (
     HDX_PACKAGE,
     HDX_SRC_URL,
     SC_BASE,
+    SC_LOCAL,
     SC_URL,
     SRC,
 )
@@ -21,11 +23,14 @@ from .utils import catalog_path, download, get_json, meta_path
 
 logger = getLogger(__name__)
 
+_TIERS = ("extended", "original")
+_LANGS = ("src_lang", "src_lang1", "src_lang2")
+
 
 def load_hdx(conn: duckdb.DuckDBPyConnection) -> None:
     """Write catalog/cod-ab/{iso3}/ with both tiers and its metadata sidecar."""
     metadata = _load_metadata(conn)
-    catalog = get_json(f"{SC_BASE}/extended/catalog.json")
+    catalog = _sc_json("extended/catalog.json")
     iso3s = sorted(
         link["href"].split("/")[1]
         for link in catalog["links"]
@@ -41,42 +46,70 @@ def load_hdx(conn: duckdb.DuckDBPyConnection) -> None:
             logger.warning("%s: admin_level_full=%s, skipping", key, lvl)
             continue
         layer = f"{key}/latest/{key}_admin{lvl}"
-        ext_coll = get_json(f"{SC_BASE}/extended/{layer}/collection.json")
-        ext = _fetch(ext_coll, f"{SC_BASE}/extended/{layer}", "extended")
+        ext_coll = _sc_json(f"extended/{layer}/collection.json")
+        row = {
+            "key": key,
+            "iso3": key.upper(),
+            "src": SRC,
+            **meta,
+            "src_lic": ext_coll["license"],
+            "src_url": HDX_SRC_URL,
+            "src_grp": "COD",
+        }
+        if _is_current(key, row, layer):
+            continue
+        ext = _fetch(ext_coll, f"extended/{layer}", "extended")
         conform(
             conn,
             f"SELECT * FROM read_parquet('{ext}')",
             lvl,
             catalog_path(SRC, "extended", key),
         )
-        orig_coll = get_json(f"{SC_BASE}/original/{layer}/collection.json")
-        orig = _fetch(orig_coll, f"{SC_BASE}/original/{layer}", "original")
+        orig_coll = _sc_json(f"original/{layer}/collection.json")
+        orig = _fetch(orig_coll, f"original/{layer}", "original")
         _write_original(conn, orig, lvl, catalog_path(SRC, "original", key))
         langs = conn.execute(
             f"SELECT any_value(lang), any_value(lang1), any_value(lang2) "
             f"FROM read_parquet('{ext}')"
         ).fetchall()[0]
-        row = {
-            "key": key,
-            "iso3": key.upper(),
-            "src": SRC,
-            **meta,
-            **dict(zip(("src_lang", "src_lang1", "src_lang2"), langs, strict=True)),
-            "src_lic": ext_coll["license"],
-            "src_url": HDX_SRC_URL,
-            "src_grp": "COD",
-        }
-        for tier in ("extended", "original"):
+        row |= dict(zip(_LANGS, langs, strict=True))
+        for tier in _TIERS:
             row |= {"tier": tier, "via": f"{SC_URL}/{tier}/{layer}"}
             write_meta(row, meta_path(SRC, key))
 
 
-def _fetch(coll: dict, base: str, tier: str) -> Path:
-    """Download a STAC collection's data asset into tmp/sources/hdx/{tier}/."""
+def _is_current(key: str, row: dict, layer: str) -> bool:
+    """Return whether both tiers exist and the sidecar already holds this row."""
+    path = meta_path(SRC, key)
+    if not path.exists() or not all(catalog_path(SRC, t, key).exists() for t in _TIERS):
+        return False
+    have = {r["tier"]: r for r in json.loads(path.read_text())["rows"]}
+    for tier in _TIERS:
+        want = row | {"tier": tier, "via": f"{SC_URL}/{tier}/{layer}"}
+        want = json.loads(json.dumps(want, default=lambda v: v.isoformat()[:10]))
+        old = have.get(tier, {})
+        if any(old.get(k) != v for k, v in want.items()):
+            return False
+    return True
+
+
+def _sc_json(rel: str) -> dict:
+    """Read a cod-ab STAC file from SC_LOCAL if present, else from source.coop."""
+    local = SC_LOCAL / rel
+    if local.exists():
+        return json.loads(local.read_text())
+    return get_json(f"{SC_BASE}/{rel}")
+
+
+def _fetch(coll: dict, rel: str, tier: str) -> Path:
+    """Return a collection's data asset from SC_LOCAL, else download it to tmp."""
     asset = next(a for a in coll["assets"].values() if "data" in a.get("roles", []))
-    url = f"{base}/{asset['href'].removeprefix('./')}"
-    dest = DOWNLOAD_DIR / "hdx" / tier / url.rsplit("/", 1)[1]
-    return download(url, dest, asset.get("file:size"))
+    rel = f"{rel}/{asset['href'].removeprefix('./')}"
+    local = SC_LOCAL / rel
+    if local.exists():
+        return local
+    dest = DOWNLOAD_DIR / "hdx" / tier / rel.rsplit("/", 1)[1]
+    return download(f"{SC_BASE}/{rel}", dest, asset.get("file:size"))
 
 
 def _write_original(

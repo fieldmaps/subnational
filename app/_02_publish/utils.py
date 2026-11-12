@@ -92,13 +92,32 @@ def sync_catalog() -> None:
         raise RuntimeError(msg)
 
 
-def write_metadata(folder: Path, **fields: object) -> None:
-    """Write folder/.portolan/metadata.yaml (JSON values are valid YAML)."""
+def write_metadata(folder: Path, **fields: object) -> bool:
+    """Write folder/.portolan/metadata.yaml when it differs; return whether it did."""
     fields = {"contact": CONTACT, **fields}
     path = folder / ".portolan" / "metadata.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in fields.items()]
-    path.write_text("\n".join(lines) + "\n")
+    text = "\n".join(lines) + "\n"
+    if path.exists() and path.read_text() == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return True
+
+
+def stale_collections() -> set[str]:
+    """Return collections whose files differ from versions.json, README aside.
+
+    portolan readme rewrites each README after add records it, so it always differs.
+    """
+    envelope = portolan("status", "--offline")
+    return {
+        c["collection"]
+        for c in envelope["data"]["collections"]
+        if set(c["modified_files"]) - {"README.md"}
+        or c["untracked_files"]
+        or c["deleted_files"]
+    }
 
 
 def license_fields(src_lic: str | None, src_url: str | None) -> dict:

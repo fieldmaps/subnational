@@ -3,11 +3,13 @@
 from collections import Counter
 
 import app.config
+from app._02_publish import fieldmaps_publish
 from app._02_publish.config import HOST, INTERNATIONAL_URL
 from app._02_publish.utils import (
     ensure_catalog,
     license_fields,
     portolan,
+    tile_collection,
     write_metadata,
 )
 from app.config import BUILD_DB, CATALOG_DIR, SOURCES_TABLE
@@ -21,11 +23,12 @@ _VIEW = (
     "neighbouring area, clipped to the OSM-based admin 0 polygons of "
     f"{INTERNATIONAL_URL}."
 )
-_GEOM_TEXT = {
-    "polygons": "polygons, dissolved from the finest source level",
-    "lines": "boundary lines up to this level (adm_lvl -1 is the exterior edge)",
-    "points": "one interior point per polygon",
-}
+_FILES = (
+    "admin{n}.parquet: polygons, dissolved from the finest source level; "
+    "admin{n}_points.parquet: one label point per polygon; "
+    "admin{n}_lines.parquet: boundary lines up to this level "
+    "(adm_lvl -1 is the exterior edge)."
+)
 
 
 def main() -> None:
@@ -45,24 +48,26 @@ def main() -> None:
         processing_notes=notes,
     )
     when = ["--datetime", str(stamp)[:10]] if stamp else []
+    force = ["--force"] if app.config.FORCE_PMTILES else []
     for lvl in levels:
-        for geom, text in _GEOM_TEXT.items():
-            folder = f"global/adm{lvl}-{geom}"
-            write_metadata(
-                CATALOG_DIR / folder,
-                title=f"Admin {lvl} {geom}",
-                description=f"Admin level {lvl} {text}. {_VIEW}",
-                **license_fields(GLOBAL_LICENSE, None),
-                providers=[HOST],
-                processing_notes=notes,
-            )
-            portolan("add", folder, "--pmtiles", *when)
+        folder = f"global/admin{lvl}"
+        write_metadata(
+            CATALOG_DIR / folder,
+            title=f"Admin {lvl}",
+            description=f"Admin level {lvl}. {_FILES.format(n=lvl)} {_VIEW}",
+            **license_fields(GLOBAL_LICENSE, None),
+            providers=[HOST],
+            processing_notes=notes,
+        )
+        tile_collection(CATALOG_DIR / folder, force=app.config.FORCE_PMTILES)
+        portolan("add", folder, *when, *force)
     portolan("metadata", "validate")
     portolan("readme")
+    # --fix reports failure while any unfixable warning remains; the next check decides.
+    portolan("check", "--fix", "--metadata", strict=False)
     portolan("check", "--data-scope", "local")
     if app.config.PUSH:
-        portolan("push", "--dry-run")
-        portolan("push")
+        fieldmaps_publish.push(CATALOG_DIR)
 
 
 def _source_notes() -> str:

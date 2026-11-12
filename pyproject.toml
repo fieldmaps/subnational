@@ -7,12 +7,13 @@ requires-python = ">=3.13"
 dependencies = [
     "duckdb>=2.0.0",
     "httpx2[http2]>=2.16.0",
-    "openpyxl>=3.1.5",
     "pandas>=3.1.0",
+    "portolan-cli>=0.9.0",
     "psutil>=7.2.2",
     "python-dotenv>=1.2.4",
     "tenacity>=9.2.1",
-    "topo-tools>=0.18.0",
+    "topo-tools>=0.20.0",
+    "tylertoo>=0.8.0",
 ]
 
 [dependency-groups]
@@ -22,3 +23,7 @@ dev = ["ruff>=0.17.2"]
 fix = true
 lint.select = ["ALL"]
 lint.ignore = ["COM812", "CPY001", "D203", "D213", "S603", "S607", "S608"]
+
+[tool.uv]
+# geoparquet-io (via portolan-cli) pins duckdb<1.6; the pipeline needs DuckDB 2.0.
+override-dependencies = ["duckdb>=2.0.0"]

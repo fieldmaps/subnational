@@ -1,5 +1,5 @@
 """Configuration constants for the export stage."""
 
-AREA_CRS = "EPSG:8857"
-
 GLOBAL_LICENSE = "ODbL-1.0"
+# admin{N}{suffix}.parquet per build table geometry.
+SUFFIXES = {"polygons": "", "points": "_points", "lines": "_lines"}

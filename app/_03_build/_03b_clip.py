@@ -1,5 +1,6 @@
 """Clip per-iso3 inputs to the ADM0 boundary, fill down, and package every level."""
 
+from logging import getLogger
 from pathlib import Path
 from shutil import rmtree
 
@@ -9,10 +10,11 @@ from topo_tools.api import edge_mosaic, package, schema_fill
 from app.config import PARQUET_OPTS, TMP_DIR
 
 from ._03a_inputs import input_paths, stage_extended
+from .config import CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
+
+logger = getLogger(__name__)
 
 CLIP_DIR = TMP_DIR / "build" / "clip"
-NAME_FIELD = "adm{n}_name"
-CODE_FIELD = "adm{n}_id"
 
 
 def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
@@ -20,24 +22,26 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
     rmtree(CLIP_DIR, ignore_errors=True)
     CLIP_DIR.mkdir(parents=True)
     parent_path = CLIP_DIR / "parent.parquet"
-    conn.execute(f"""--sql
-        COPY (SELECT iso3, geom FROM adm0_bounds) TO '{parent_path}' {PARQUET_OPTS}
-    """)
+    conn.execute(f"COPY adm0_bounds TO '{parent_path}' {PARQUET_OPTS}")
 
     clipped_path = CLIP_DIR / "clipped.parquet"
+    issues_path = CLIP_DIR / "clipped_issues.parquet"
     edge_mosaic(
         input_paths=stage_extended(conn),
         overlay_path=parent_path,
         output_path=clipped_path,
-        issues_path=CLIP_DIR / "clipped_issues.parquet",
+        issues_path=issues_path,
         original_paths=input_paths("original"),
-        match_column="iso3",
+        match_column=MATCH_KEY,
         merge=True,
-        overlay_include=["iso3"],
-        input_exclude=["iso3"],
+        overlay_include=[MATCH_KEY, *WLD_COLS],
+        input_exclude=[MATCH_KEY],
         threads=4,
         tmp_dir=CLIP_DIR,
+        # The global coverage clean exits the process on a 16 GB machine.
+        clean=False,
     )
+    _log_issues(conn, issues_path)
 
     filled_path = CLIP_DIR / "filled.parquet"
     schema_fill(
@@ -85,20 +89,31 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
     return levels
 
 
+def _log_issues(conn: duckdb.DuckDBPyConnection, issues_path: Path) -> None:
+    """Warn with edge_mosaic's issue counts per kind, non-blocking."""
+    if not issues_path.exists():
+        return
+    for kind, count in conn.execute(
+        f"SELECT kind, count(*) FROM read_parquet('{issues_path}') GROUP BY ALL"
+    ).fetchall():
+        logger.warning("edge_mosaic: %d %s issue(s), see %s", count, kind, issues_path)
+
+
 def _backfill_adm0_identity(
     conn: duckdb.DuckDBPyConnection, clipped_path: Path
 ) -> Path:
-    """Backfill adm0_id/_src/_name* from adm0_wld for gap-filled territories only."""
+    """Backfill adm0_* and iso2/iso3 from adm0_wld for gap-filled territories only."""
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE src_clipped AS
         SELECT * FROM read_parquet('{clipped_path}')
     """)
     conn.execute("""--sql
         UPDATE src_clipped SET
-            adm0_id = w.adm0_id, adm0_src = w.adm0_src, adm0_name = w.adm0_name,
-            adm0_name1 = w.adm0_name1, adm0_name2 = w.adm0_name2
+            adm0_id = w.adm0_id, adm0_pcode = w.adm0_src, adm0_name = w.adm0_name,
+            adm0_name1 = w.adm0_name1, adm0_name2 = w.adm0_name2,
+            iso2 = w.iso_2, iso3 = w.iso_3
         FROM adm0_wld w
-        WHERE src_clipped.iso3 = w.iso_3 AND src_clipped.adm0_id IS NULL
+        WHERE src_clipped.iso_3 = w.iso_3 AND src_clipped.adm0_id IS NULL
     """)
     path = clipped_path.with_name("clipped_backfilled.parquet")
     conn.execute(f"COPY src_clipped TO '{path}' {PARQUET_OPTS}")

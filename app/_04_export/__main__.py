@@ -1,13 +1,11 @@
-"""Export stage: turn tmp/build.duckdb's tables into all on-disk file formats."""
+"""Export stage: write catalog/global/ GeoParquets and register them with portolan."""
 
-from . import _04a_outputs, _04b_area, _04c_formats, _04d_publish
+from . import _04a_outputs, _04d_publish
 
 
 def main() -> None:
-    """Write GeoParquets, area stats, and format conversions, then publish them."""
+    """Write the global GeoParquets, then publish them."""
     _04a_outputs.main()
-    _04b_area.main()
-    _04c_formats.main()
     _04d_publish.main()
 
 

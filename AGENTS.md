@@ -7,8 +7,8 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 ```text
 app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), back up cod-ab into catalog/cod-ab/, write tmp/sources/sources.parquet
 app/_02_publish/     → register every catalog/{src}/{base} collection with portolan (--push uploads)
-app/_03_build/       → stage the selected extended layers, edge-match with topo-tools into tmp/build.duckdb
-app/_04_export/      → write GeoParquets, format conversions, area stats, and catalog/global/ collections
+app/_03_build/       → code the selected extended layers (topo-tools code-create), edge-mosaic to the world-view ADM0, package and validate into tmp/build.duckdb
+app/_04_export/      → write catalog/global/admin{n}/admin{n}{,_points,_lines}.parquet and register them with portolan (--push uploads)
 scripts/migrate_fieldmaps.py → one-time copy of data.fieldmaps.io layers into catalog/ (delete after migration)
 scripts/ingest_erm.py → yearly EuroGeographics ERM release into catalog/erm/ (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
 ```
@@ -31,7 +31,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 | 3           | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | migrated once                    |
 | 4           | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | migrated once                    |
 
-`sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers and generates `adm{n}_id` from `adm{n}_pcode`.
+`sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
 
 ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`).
 
@@ -40,7 +40,7 @@ ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the loc
 - No PostgreSQL, no PostGIS, no Docker database service.
 - Use DuckDB (`ST_Read`, `COPY ... PARQUET_OPTS`) for reading and writing geodata; `gdal vector` only where DuckDB can't.
 - `catalog/.portolan/config.yaml` sets `add_bbox: false` and `sort: none` so `portolan add` keeps files as written, and `pmtiles.max_zoom: 12`.
-- portolan runs through `app/_02_publish/tylertoo_portolan.py`, which tiles `--pmtiles` with tylertoo; install with `uv tool install portolan-cli --with tylertoo`.
+- portolan-cli and tylertoo are project dependencies (`uv sync`). `tile_collection` in `app/_02_publish/utils.py` tiles each `<stem>.parquet` as `<stem>.pmtiles` with tylertoo (max zoom 12), and `portolan add` (no `--pmtiles`) registers the existing tiles.
 - `app/_02_publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copies in fieldmaps/international and OCHA-DAP/cod-site.
 - DuckDB built-in GDAL (`FORMAT GDAL`) handles GPKG/GDB/XLSX export.
 

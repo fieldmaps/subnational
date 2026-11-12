@@ -2,10 +2,12 @@
 
 import json
 import os
-import shutil
 import subprocess
 from logging import getLogger
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import tylertoo
 
 from app.config import CATALOG_DIR
 
@@ -30,19 +32,47 @@ _CONFIG_YAML = f"""conversion:
 pmtiles:
   max_zoom: {PMTILES_MAX_ZOOM}
 """
-_LAUNCHER = Path(__file__).with_name("tylertoo_portolan.py")
 
 
 def portolan(*args: str, strict: bool = True) -> dict:
     """Run a portolan command in catalog/ and return its JSON envelope."""
-    # The launcher runs in portolan's tool env, found via its entry point shebang.
-    python = Path(shutil.which("portolan") or "portolan").read_text().split()[0][2:]
-    command = (python, str(_LAUNCHER))
     if args and args[0] == "add":
-        return fieldmaps_publish.add(
-            CATALOG_DIR, *args[1:], strict=strict, command=command
+        return fieldmaps_publish.add(CATALOG_DIR, *args[1:], strict=strict)
+    return fieldmaps_publish.run(CATALOG_DIR, *args, strict=strict)
+
+
+def tile_collection(folder: Path, *, force: bool = False) -> None:
+    """Tile each <stem>.parquet in folder as <stem>.pmtiles when missing or older."""
+    for parquet in sorted(folder.glob("*.parquet")):
+        pmtiles = parquet.with_suffix(".pmtiles")
+        if (
+            force
+            or not pmtiles.exists()
+            or pmtiles.stat().st_mtime < parquet.stat().st_mtime
+        ):
+            _tile(parquet, pmtiles)
+
+
+def _tile(parquet: Path, pmtiles: Path) -> None:
+    """Tile one GeoParquet with tylertoo, every boundary at every zoom."""
+    with TemporaryDirectory() as tmp:
+        overview = Path(tmp) / "overview.parquet"
+        tylertoo.overview(
+            str(parquet),
+            str(overview),
+            max_zoom=PMTILES_MAX_ZOOM,
+            density_drop=False,
+            line_thinning=0,
+            line_visibility=0,
+            polygon_thinning=0,
+            polygon_visibility=0,
         )
-    return fieldmaps_publish.run(CATALOG_DIR, *args, strict=strict, command=command)
+        tylertoo.export_pmtiles(
+            str(overview),
+            str(pmtiles),
+            layer_name=parquet.stem,
+            tile_size_limit=None,
+        )
 
 
 def sync_catalog() -> None:

@@ -11,8 +11,6 @@ from app.publish.utils import portolan
 
 from .config import (
     COD_AB_DATA,
-    COD_AB_META_API,
-    COD_AB_META_CSV,
     COD_AB_SRC_URL,
     COD_AB_URL,
     DOWNLOAD_DIR,
@@ -29,7 +27,6 @@ _LANGS = ("src_lang", "src_lang1", "src_lang2")
 
 def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
     """Write catalog/iso3/{iso3}/ from cod-ab when its metadata or data changed."""
-    metadata = _load_metadata(conn)
     catalog = get_json(f"{COD_AB_DATA}/extended/catalog.json")
     iso3s = sorted(
         link["href"].split("/")[1]
@@ -37,12 +34,12 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
         if link["rel"] == "child"
     )
     for key in iso3s:
-        meta = metadata.get(key.upper())
-        if meta is None or meta["src_lvl"] is None:
-            logger.warning("%s: not in the COD-AB metadata CSV, skipping", key)
+        if key in KEEP:
             continue
+        meta = _metadata(key)
         lvl = meta["src_lvl"]
-        if key in KEEP or not 1 <= lvl <= MAX_LVL:
+        if lvl is None or not 1 <= lvl <= MAX_LVL:
+            logger.warning("%s: admin_level_full=%s, skipping", key, lvl)
             continue
         layer = f"{key}/latest/{key}_admin{lvl}"
         colls = {
@@ -110,25 +107,14 @@ def _fetch(coll: dict, rel: str, tier: str) -> Path:
     return download(f"{COD_AB_DATA}/{rel}/{name}", dest, _data(coll).get("file:size"))
 
 
-def _load_metadata(conn: duckdb.DuckDBPyConnection) -> dict:
-    """Return {iso3: src_* dict} from the COD-AB global metadata CSV on HDX."""
-    resources = get_json(COD_AB_META_API)["result"]["resources"]
-    url = next(r["url"] for r in resources if r["name"] == COD_AB_META_CSV)
-    csv = download(url, DOWNLOAD_DIR / COD_AB_META_CSV)
-    rows = conn.execute(f"""--sql
-        SELECT
-            country_iso3,
-            TRY_CAST(admin_level_full AS INTEGER),
-            TRY_CAST(date_source AS DATE),
-            TRY_CAST(date_updated AS DATE),
-            source,
-            contributor
-        FROM read_csv('{csv}', nullstr=['', '#N/A'])
-        WHERE country_iso3 IS NOT NULL
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY country_iso3
-            ORDER BY TRY_CAST(date_updated AS DATE) DESC NULLS LAST
-        ) = 1
-    """).fetchall()
-    keys = ("src_lvl", "src_date", "src_update", "src_name", "src_name1")
-    return {row[0]: dict(zip(keys, row[1:], strict=True)) for row in rows}
+def _metadata(key: str) -> dict:
+    """Return the src_* fields from cod-ab's original/{iso3}/latest catalog."""
+    cat = get_json(f"{COD_AB_DATA}/original/{key}/latest/catalog.json")
+    fields = {
+        "src_lvl": "admin_level_full",
+        "src_date": "date_source",
+        "src_update": "date_updated",
+        "src_name": "source",
+        "src_name1": "contributor",
+    }
+    return {k: cat.get(f"cod_ab:{v}") for k, v in fields.items()}

@@ -25,7 +25,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 | `src`           | Upstream                                     | Refresh                          |
 | --------------- | -------------------------------------------- | -------------------------------- |
-| `cod-ab`        | `source.coop/hdx/cod-ab`, latest finest level | every step 1 run when the HDX metadata row or upstream `file:checksum` changes; replaces any other src except the iso3s in `KEEP` (`app/config.py`); kept if removed upstream |
+| `cod-ab`        | `source.coop/hdx/cod-ab`, latest `cod_ab:admin_level_full` layer; `src_*` from the `cod_ab:*` properties of `original/{iso3}/latest/catalog.json` | every step 1 run when those properties or the upstream `file:checksum` change; replaces any other src except the iso3s in `KEEP` (`app/config.py`); kept if removed upstream |
 | `erm`           | EuroGeographics EuroRegionalMap (manual download) | `scripts/ingest_erm.py` per yearly release |
 | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | frozen                           |
 | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | frozen                           |

@@ -2,7 +2,7 @@
 
 import duckdb
 
-from app._03_build.config import MATCH_KEY
+from app._02_build.config import MATCH_KEY
 from app.config import BUILD_DB, GEOMS, PARQUET_OPTS
 from app.utils import get_conn
 

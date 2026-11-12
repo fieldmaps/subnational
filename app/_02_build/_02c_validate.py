@@ -4,7 +4,7 @@ from logging import getLogger
 
 from topo_tools.api import validate as topo_validate
 
-from ._03b_clip import CLIP_DIR
+from ._02b_clip import CLIP_DIR
 from .config import CODE_FIELD, NAME_FIELD
 
 logger = getLogger(__name__)

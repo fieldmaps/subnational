@@ -5,35 +5,32 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 ## Pipeline Stages
 
 ```text
-app/_01_sources/     → back up cod-ab into sources/cod-ab/, write tmp/sources/sources.parquet
-app/_02_publish/     → clone catalog/ from PORTOLAN_REMOTE if missing, copy each base iso3's selected layers into catalog/iso3/{base}/ and register them with portolan (--push uploads)
-app/_03_build/       → code the selected extended layers (topo-tools code-create), edge-mosaic to the world-view ADM0, package and validate into tmp/build.duckdb
-app/_04_export/      → write catalog/global/admin{n}/admin{n}{,_points,_lines}.parquet and register them with portolan (--push uploads)
-scripts/migrate_fieldmaps.py → one-time copy of data.fieldmaps.io layers into sources/ (delete after migration)
-scripts/ingest_erm.py → yearly EuroGeographics ERM release into sources/erm/ (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
+app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), refresh cod-ab collections in catalog/iso3/, then register changed collections with portolan (--push uploads)
+app/_02_build/       → code the published extended layers (topo-tools code-create), edge-mosaic to the world-view ADM0, package and validate into tmp/build.duckdb
+app/_03_export/      → write catalog/global/admin{n}/admin{n}{,_points,_lines}.parquet and register them with portolan (--push uploads)
+app/publish/         → shared portolan helpers (tiling, metadata, add, readme/check, push) for sources and export
+scripts/ingest_erm.py → yearly EuroGeographics ERM release into the catalog/iso3/ collections published from erm (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
 ```
 
-Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step sources` (or `publish`, `build`, `export`); also honors `STEP` env var.
+Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step sources` (or `build`, `export`); also honors `STEP` env var.
 
 ## Catalog and Sources
 
-`sources/` (local only, never pushed) backs up every upstream layer, one folder per source and base iso3, `sources/{src}/{base}/`:
+`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `iso3/{base}/` holds one source's layers per base iso3; `global/admin{n}/` holds the export. Each `iso3/{base}/` collection has:
 
 - `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). Multi-extent keys (`pak_1_extended`, `pak_2_extended`) sit beside the single `{base}_original.parquet`.
-- `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`), the only record of it.
+- `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.
 - Both tiers use the cod-ab extended schema for every source (`adm{n}_name..name3, adm{n}_pcode` for n = lvl..0, then `valid_on, valid_to, version, lang..lang3, iso2, iso3, geometry`), defined in `app/_01_sources/schema.py`.
 - `original` tier: the source's own geometry (for `erm`, its units dissolved before extension); `extended` tier: that layer extended past its coastline.
 
-| Priority    | `src`           | Upstream                                     | Refresh                          |
-| ----------- | --------------- | -------------------------------------------- | -------------------------------- |
-| 1 (highest) | `cod-ab`        | `source.coop/hdx/cod-ab`, latest finest level | every step 1 run; kept if removed upstream |
-| 2           | `erm`           | EuroGeographics EuroRegionalMap (manual download) | `scripts/ingest_erm.py` per yearly release |
-| 3           | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | migrated once                    |
-| 4           | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | migrated once                    |
+| `src`           | Upstream                                     | Refresh                          |
+| --------------- | -------------------------------------------- | -------------------------------- |
+| `cod-ab`        | `source.coop/hdx/cod-ab`, latest finest level | every step 1 run when the HDX metadata row or upstream `file:checksum` changes; replaces any other src except the iso3s in `KEEP` (`app/config.py`); kept if removed upstream |
+| `erm`           | EuroGeographics EuroRegionalMap (manual download) | `scripts/ingest_erm.py` per yearly release |
+| `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | frozen                           |
+| `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | frozen                           |
 
-`sources.parquet` marks one `selected` src per base iso3 by priority, or by the per-iso3 `PREFER` override in `app/config.py`. The build reads only selected layers from `sources/` and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
-
-`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational`, with two sub-catalogs: `iso3/{base}/` holds the selected src's layers and sidecar for each base iso3 (collection description names the src), and `global/admin{n}/` holds the export.
+`archive/` (gitignored, never read) holds every source's layers per iso3 as `archive/{src}/{base}/`, for switching an iso3 to another source by hand. The build reads every published extended layer and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
 
 ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`).
 
@@ -42,8 +39,8 @@ ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the loc
 - No PostgreSQL, no PostGIS, no Docker database service.
 - Use DuckDB (`ST_Read`, `COPY ... PARQUET_OPTS`) for reading and writing geodata; `gdal vector` only where DuckDB can't.
 - `catalog/.portolan/config.yaml` sets `add_bbox: false` and `sort: none` so `portolan add` keeps files as written, and `pmtiles.max_zoom: 12`.
-- portolan-cli and tylertoo are project dependencies (`uv sync`). `tile_collection` in `app/_02_publish/utils.py` tiles each `<stem>.parquet` as `<stem>.pmtiles` with tylertoo (max zoom 12), and `portolan add` (no `--pmtiles`) registers the existing tiles.
-- `app/_02_publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copies in fieldmaps/international and OCHA-DAP/cod-site.
+- portolan-cli and tylertoo are project dependencies (`uv sync`). `tile_collection` in `app/publish/utils.py` tiles each `<stem>.parquet` as `<stem>.pmtiles` with tylertoo (max zoom 12), and `portolan add` (no `--pmtiles`) registers the existing tiles.
+- `app/publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copies in fieldmaps/international and OCHA-DAP/cod-site.
 - DuckDB built-in GDAL (`FORMAT GDAL`) handles GPKG/GDB/XLSX export.
 
 ## DuckDB Patterns
@@ -74,7 +71,7 @@ conn.execute(f"COPY (SELECT * FROM src) TO '{dest}' (FORMAT GDAL, DRIVER 'GPKG')
 uv sync
 uv run -m app
 uv run -m app --step sources
-uv run -m app --step publish --force-pmtiles   # rebuild every PMTiles after tiling settings change
+uv run -m app --step sources --force-pmtiles   # rebuild every PMTiles after tiling settings change
 uv run ruff check && uv run ruff format
 ```
 

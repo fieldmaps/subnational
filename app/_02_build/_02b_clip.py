@@ -9,7 +9,7 @@ from topo_tools.api import edge_mosaic, package, schema_fill
 
 from app.config import PARQUET_OPTS, TMP_DIR
 
-from ._03a_inputs import input_paths, stage_extended
+from ._02a_inputs import input_paths, stage_extended
 from .config import CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
 
 logger = getLogger(__name__)

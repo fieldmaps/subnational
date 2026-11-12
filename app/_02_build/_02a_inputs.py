@@ -1,11 +1,11 @@
-"""Stage the selected per-iso3 inputs and build the ADM0 clip boundary."""
+"""Stage the published per-iso3 inputs and build the ADM0 clip boundary."""
 
 import duckdb
 from topo_tools.api import code_create, topo_clean
 
-from app._01_sources.schema import columns
-from app._01_sources.utils import source_path
-from app.config import MAX_LVL, PARQUET_OPTS, SOURCES_TABLE, TMP_DIR
+from app._01_sources.schema import SOURCES_SQL, columns
+from app._01_sources.utils import catalog_path
+from app.config import MAX_LVL, PARQUET_OPTS, TMP_DIR
 
 from .config import (
     ADM0_BASE,
@@ -37,25 +37,25 @@ _META = (
 
 
 def input_paths(tier: str) -> list[str]:
-    """Return the selected {tier} parquet paths, sorted by key."""
-    return [str(source_path(src, tier, key)) for src, key in _selected(tier)]
+    """Return the published {tier} parquet paths, sorted by key."""
+    return [str(catalog_path(tier, key)) for key in _keys(tier)]
 
 
 def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
-    """Add fieldmaps adm{n}_id codes and src_* metadata to each selected layer.
+    """Add fieldmaps adm{n}_id codes and src_* metadata to each published layer.
 
     MATCH_KEY is the upper-cased key so multi-extent keys (e.g. GEO_1) match.
     """
     STAGE_DIR.mkdir(parents=True, exist_ok=True)
     paths = []
-    for src, key in _selected("extended"):
+    for key in _keys("extended"):
         row = conn.execute(
-            f"SELECT {', '.join(_META)} FROM read_parquet('{SOURCES_TABLE}') "
-            "WHERE tier = 'extended' AND src = ? AND key = ?",
-            [src, key],
+            f"SELECT {', '.join(_META)} FROM ({SOURCES_SQL}) "
+            "WHERE tier = 'extended' AND key = ?",
+            [key],
         ).fetchall()[0]
         meta = dict(zip(_META, row, strict=True))
-        path = source_path(src, "extended", key)
+        path = catalog_path("extended", key)
         stamp = (
             conn.execute(
                 f"SELECT max(CAST(valid_on AS DATE)) FROM read_parquet('{path}')"
@@ -121,14 +121,13 @@ def _type(col: str) -> str:
     )
 
 
-def _selected(tier: str) -> list[tuple[str, str]]:
-    """Return (src, key) of the selected rows of one tier, sorted by key."""
+def _keys(tier: str) -> list[str]:
+    """Return the published keys of one tier, sorted."""
     with duckdb.connect() as conn:
-        return conn.execute(
-            f"SELECT src, key FROM read_parquet('{SOURCES_TABLE}') "
-            "WHERE selected AND tier = ? ORDER BY key",
-            [tier],
+        rows = conn.execute(
+            f"SELECT key FROM ({SOURCES_SQL}) WHERE tier = ? ORDER BY key", [tier]
         ).fetchall()
+    return [key for (key,) in rows]
 
 
 def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:

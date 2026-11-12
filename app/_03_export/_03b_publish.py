@@ -3,16 +3,17 @@
 from collections import Counter
 
 import app.config
-from app._02_publish import fieldmaps_publish
-from app._02_publish.config import HOST, INTERNATIONAL_URL
-from app._02_publish.utils import (
+from app._01_sources.schema import SOURCES_SQL
+from app.config import BUILD_DB, CATALOG_DIR
+from app.publish.config import HOST, INTERNATIONAL_URL
+from app.publish.utils import (
     ensure_catalog,
+    finalize,
     license_fields,
     portolan,
     tile_collection,
     write_metadata,
 )
-from app.config import BUILD_DB, CATALOG_DIR, SOURCES_TABLE
 from app.utils import get_conn
 
 from .config import GLOBAL_LICENSE
@@ -61,21 +62,14 @@ def main() -> None:
         )
         tile_collection(CATALOG_DIR / folder, force=app.config.FORCE_PMTILES)
         portolan("add", folder, *when, *force)
-    portolan("metadata", "validate")
-    portolan("readme")
-    # --fix reports failure while any unfixable warning remains; the next check decides.
-    portolan("check", "--fix", "--metadata", strict=False)
-    portolan("check", "--data-scope", "local")
-    if app.config.PUSH:
-        fieldmaps_publish.push(CATALOG_DIR)
+    finalize(changed=True)
 
 
 def _source_notes() -> str:
     """Summarize source and SPDX license counts across the per-iso3 inputs."""
     conn = get_conn()
     rows = conn.execute(
-        f"SELECT src, src_lic, src_url FROM read_parquet('{SOURCES_TABLE}') "
-        "WHERE selected AND tier = 'extended'"
+        f"SELECT src, src_lic, src_url FROM ({SOURCES_SQL}) WHERE tier = 'extended'"
     ).fetchall()
     conn.close()
     srcs = Counter(src for src, _, _ in rows)

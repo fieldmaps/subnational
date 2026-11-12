@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from app.config import PARQUET_OPTS
+from app.config import CATALOG_DIR, PARQUET_OPTS
 
 _LEVEL_COLS = ("name", "name1", "name2", "name3", "pcode")
 _TAIL = (
@@ -37,7 +37,21 @@ META_COLS = (
     ("src_url", "VARCHAR"),
     ("src_grp", "VARCHAR"),
     ("via", "VARCHAR"),
+    ("via_checksum", "VARCHAR"),
 )
+_ROW = "STRUCT(" + ", ".join(f'"{c}" {t}' for c, t in META_COLS) + ")"
+# One row per published (key, tier), read from every catalog/iso3 sidecar.
+SOURCES_SQL = f"""
+    SELECT *, split_part(key, '_', 1) AS base
+    FROM (
+        SELECT unnest(rows, recursive := true)
+        FROM read_json(
+            '{CATALOG_DIR}/iso3/*/*_metadata.json',
+            columns = {{'rows': '{_ROW}[]'}}
+        )
+    )
+    ORDER BY tier, key
+"""
 
 
 def columns(lvl: int) -> list[tuple[str, str]]:

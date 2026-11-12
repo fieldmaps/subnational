@@ -1,4 +1,4 @@
-"""Ingest a EuroGeographics EuroRegionalMap (ERM) release into sources/erm/.
+"""Ingest a EuroGeographics EuroRegionalMap (ERM) release into catalog/iso3/.
 
 Run: uv run python -m scripts.ingest_erm ~/Downloads/FullEurope [--icc DE,FR]
 """
@@ -12,13 +12,12 @@ from pathlib import Path
 import duckdb
 from topo_tools.api import edge_extend
 
-from app import _02_publish
+from app._01_sources._01b_publish import publish
 from app._01_sources.config import DOWNLOAD_DIR
 from app._01_sources.schema import conform, write_meta
-from app._01_sources.sources import build_sources_table
-from app._01_sources.utils import source_meta_path, source_path
-from app._03_build._03a_inputs import adm0_path
-from app._03_build.config import ADM0_HUMANITARIAN
+from app._01_sources.utils import catalog_path, meta_path, published_src
+from app._02_build._02a_inputs import adm0_path
+from app._02_build.config import ADM0_HUMANITARIAN
 from app.config import MAX_LVL, PARQUET_OPTS
 from app.utils import get_conn
 
@@ -63,7 +62,7 @@ _STAMP = re.compile(r"<gmd:dateStamp>\s*<gco:Date>([^<]+)")
 
 
 def main() -> None:
-    """Write sources/erm/{iso3}/ for every ERM country with subnational orders."""
+    """Rewrite catalog/iso3/{iso3}/ for every ERM country published from erm."""
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--icc", type=lambda v: set(v.split(",")), default=None)
@@ -82,12 +81,12 @@ def main() -> None:
         r[0] for r in conn.execute("SELECT DISTINCT cc FROM k ORDER BY cc").fetchall()
     ]
     for cc in countries:
-        if args.icc is None or cc in args.icc:
+        published = published_src(iso3[cc].lower()) == SRC
+        if published and (args.icc is None or cc in args.icc):
             _country(conn, args.root, cc, iso3[cc])
-    build_sources_table(conn)
     conn.close()
     if not args.skip_publish:
-        _02_publish.main()
+        publish()
 
 
 def _load(conn: duckdb.DuckDBPyConnection, root: Path) -> None:
@@ -299,7 +298,7 @@ def _write_extended(
         conn,
         f"SELECT * FROM read_parquet('{extended}')",
         lvl,
-        source_path(SRC, "extended", iso3.lower()),
+        catalog_path("extended", iso3.lower()),
     )
 
 
@@ -311,7 +310,7 @@ def _write_original(cc: str, key: str, lvl: int) -> None:
             conn,
             f"SELECT * FROM read_parquet('{WORK_DIR / f'{cc}.parquet'}')",
             lvl,
-            source_path(SRC, "original", key),
+            catalog_path("original", key),
         )
 
 
@@ -359,7 +358,7 @@ def _write_meta(
         "via": SRC_URL,
     }
     for tier in ("extended", "original"):
-        write_meta({**row, "tier": tier}, source_meta_path(SRC, iso3.lower()))
+        write_meta({**row, "tier": tier}, meta_path(iso3.lower()))
 
 
 if __name__ == "__main__":

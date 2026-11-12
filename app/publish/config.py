@@ -1,4 +1,4 @@
-"""Configuration constants for the publish stage."""
+"""Configuration constants for publishing to the portolan catalog."""
 
 CATALOG_ID = "subnational"
 CATALOG_URL = "https://source.coop/fieldmaps/subnational"

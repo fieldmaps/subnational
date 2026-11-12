@@ -1,17 +1,19 @@
-"""Refresh sources/cod-ab/ and index every source."""
+"""Pull the catalog, refresh cod-ab in catalog/iso3/, and publish what changed."""
 
+from app.publish.utils import sync_catalog
 from app.utils import get_conn
 
-from ._01a_hdx import load_hdx
-from .sources import build_sources_table
+from ._01a_cod_ab import load_cod_ab
+from ._01b_publish import publish
 
 
 def main() -> None:
-    """Back up cod-ab, then write the sources table."""
+    """Pull catalog/, refresh cod-ab collections, then add and push changed ones."""
+    sync_catalog()
     conn = get_conn()
-    load_hdx(conn)
-    build_sources_table(conn)
+    load_cod_ab(conn)
     conn.close()
+    publish()
 
 
 if __name__ == "__main__":

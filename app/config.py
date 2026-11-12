@@ -17,21 +17,14 @@ FORCE_PMTILES: bool = os.getenv("FORCE_PMTILES", "").upper() in _BOOL_VALS
 
 PKG_DIR = Path(__file__).parent
 TMP_DIR = PKG_DIR.parent / "tmp"
-OUTPUTS_DIR = PKG_DIR.parent / "outputs"
 
 CATALOG_DIR = PKG_DIR.parent / "catalog"
-SOURCES_DIR = PKG_DIR.parent / "sources"
-SOURCES_TABLE = TMP_DIR / "sources" / "sources.parquet"
 BUILD_DB = TMP_DIR / "build.duckdb"
-EDGE_MATCHED_DIR = OUTPUTS_DIR / "edge-matched"
 
-# Source folders, highest build priority first.
-SOURCES = ("cod-ab", "erm", "cod-ab-legacy", "geoboundaries")
-# Per-iso3 src overriding SOURCES order, where it is deeper and matches Mapbox.
-PREFER = {"mda": "erm", "pol": "erm", "svk": "erm"}
+# iso3s whose published layer cod-ab must not replace (deeper, matches Mapbox).
+KEEP = {"mda", "pol", "svk"}
 TIERS = ("extended", "original")
 MAX_LVL = 4
 
 GEOMS = ("polygons", "lines", "points")
 HTTP_TIMEOUT = 60
-WLD = os.getenv("WLD", "intl")

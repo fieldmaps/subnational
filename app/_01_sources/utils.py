@@ -1,5 +1,6 @@
 """Shared HTTP and catalog-path helpers for the sources stage."""
 
+import json
 from pathlib import Path
 
 import httpx2
@@ -10,7 +11,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.config import HTTP_TIMEOUT, SOURCES_DIR
+from app.config import CATALOG_DIR, HTTP_TIMEOUT
 
 from .config import DOWNLOAD_CHUNK_SIZE, HTTP_CONNECT_TIMEOUT
 
@@ -65,14 +66,22 @@ def download(url: str, dest: Path, size: int | None = None) -> Path:
     return dest
 
 
-def source_path(src: str, tier: str, key: str) -> Path:
-    """Return sources/{src}/{base}/{key}_{tier}.parquet, creating its folder."""
-    path = SOURCES_DIR / src / key.split("_", maxsplit=1)[0] / f"{key}_{tier}.parquet"
+def catalog_path(tier: str, key: str) -> Path:
+    """Return catalog/iso3/{base}/{key}_{tier}.parquet, creating its folder."""
+    base = key.split("_", maxsplit=1)[0]
+    path = CATALOG_DIR / "iso3" / base / f"{key}_{tier}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def source_meta_path(src: str, key: str) -> Path:
-    """Return the source folder's {base}_metadata.json sidecar path."""
+def meta_path(key: str) -> Path:
+    """Return the collection's {base}_metadata.json sidecar path."""
     base = key.split("_", maxsplit=1)[0]
-    return source_path(src, "original", base).with_name(f"{base}_metadata.json")
+    return CATALOG_DIR / "iso3" / base / f"{base}_metadata.json"
+
+
+def published_src(key: str) -> str | None:
+    """Return the src of the collection holding key, or None if there is none."""
+    path = meta_path(key)
+    rows = json.loads(path.read_text())["rows"] if path.exists() else []
+    return rows[0]["src"] if rows else None

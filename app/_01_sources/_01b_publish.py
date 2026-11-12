@@ -1,19 +1,13 @@
-"""Publish each iso3's selected source layers as catalog/iso3/{base} collections."""
+"""Register each catalog/iso3/{base} collection with portolan."""
 
-import filecmp
-import shutil
 from logging import getLogger
-from pathlib import Path
 
 import duckdb
 
 import app.config
-from app._01_sources.utils import source_meta_path, source_path
-from app.config import CATALOG_DIR, SOURCES_TABLE
-from app.utils import get_conn
-
-from . import fieldmaps_publish
-from .config import (
+from app._01_sources.schema import SOURCES_SQL
+from app._01_sources.utils import catalog_path
+from app.publish.config import (
     HOST,
     ISO3_DESCRIPTION,
     ISO3_TITLE,
@@ -21,28 +15,26 @@ from .config import (
     SRC_NOTICES,
     TIERS,
 )
-from .utils import (
+from app.publish.utils import (
+    ISO3_DIR,
     ensure_catalog,
+    finalize,
     license_fields,
     portolan,
     stale_collections,
     tile_collection,
     write_metadata,
 )
+from app.utils import get_conn
 
 logger = getLogger(__name__)
 
-ISO3_DIR = CATALOG_DIR / "iso3"
-_PUBLISHED = (".parquet", ".pmtiles", ".thumb.jpg")
 
-
-def main() -> None:
-    """Copy selected layers into catalog/iso3/, add changed ones, push with --push."""
+def publish() -> None:
+    """Write metadata, add changed collections, check, and push with --push."""
     ensure_catalog()
     conn = get_conn()
-    df = conn.execute(
-        f"SELECT * FROM read_parquet('{SOURCES_TABLE}') WHERE selected"
-    ).df()
+    df = conn.execute(SOURCES_SQL).df()
     rows = df.astype(object).where(df.notna(), None).to_dict("records")
     groups: dict[str, list[dict]] = {}
     for row in rows:
@@ -55,9 +47,6 @@ def main() -> None:
         description=f"{ISO3_DESCRIPTION}\n\n{_sources_table(groups, names)}",
         **license_fields(None, None),
     )
-    removed = _remove_unselected(set(groups))
-    for base, group in groups.items():
-        _sync(base, group)
     stale = stale_collections()
     added = [
         f"iso3/{base}"
@@ -65,15 +54,7 @@ def main() -> None:
         if _add(base, group, names[base] or base.upper(), stale)
     ]
     logger.info("publish: %d collection(s) changed: %s", len(added), added)
-    if added or removed or iso3_changed:
-        # portolan treats a readme/check PATH as the catalog root, so run them whole.
-        portolan("metadata", "validate")
-        portolan("readme")
-        # --fix reports failure while an unfixable warning remains; check decides.
-        portolan("check", "--fix", "--metadata", strict=False)
-        portolan("check", "--data-scope", "local")
-    if app.config.PUSH:
-        fieldmaps_publish.push(CATALOG_DIR)
+    finalize(changed=bool(added) or iso3_changed)
 
 
 def _adm0_name(conn: duckdb.DuckDBPyConnection, group: list[dict]) -> str | None:
@@ -81,7 +62,7 @@ def _adm0_name(conn: duckdb.DuckDBPyConnection, group: list[dict]) -> str | None
     row = next((r for r in group if r["tier"] == "extended"), None)
     if row is None:
         return None
-    path = source_path(row["src"], "extended", row["key"])
+    path = catalog_path("extended", row["key"])
     return conn.execute(
         "SELECT any_value(adm0_name) FROM read_parquet(?)", [str(path)]
     ).fetchall()[0][0]
@@ -112,44 +93,6 @@ def _license_name(src_lic: str | None, src_url: str | None) -> str:
     """Return the SPDX id, or the source's own license name for `other`."""
     spdx = license_fields(src_lic, src_url)["license"]
     return src_lic if spdx == "other" and src_lic else spdx
-
-
-def _remove_unselected(bases: set[str]) -> list[str]:
-    """Remove iso3/{base} collections whose base has no selected source."""
-    removed = sorted(
-        d.name
-        for d in ISO3_DIR.iterdir()
-        if d.is_dir() and not d.name.startswith(".") and d.name not in bases
-    )
-    for base in removed:
-        portolan("rm", "-f", f"iso3/{base}")
-    return removed
-
-
-def _sync(base: str, group: list[dict]) -> None:
-    """Copy the selected layers and sidecar into iso3/{base}; drop other layers."""
-    folder = ISO3_DIR / base
-    folder.mkdir(parents=True, exist_ok=True)
-    src = group[0]["src"]
-    want = {
-        f"{r['key']}_{r['tier']}.parquet": source_path(src, r["tier"], r["key"])
-        for r in group
-    }
-    want[f"{base}_metadata.json"] = source_meta_path(src, base)
-    for name, path in want.items():
-        dest = folder / name
-        if not dest.exists() or not filecmp.cmp(path, dest):
-            shutil.copy2(path, dest)
-    stems = {Path(n).stem for n in want if n.endswith(".parquet")}
-    versions = folder / "versions.json"
-    tracked = versions.read_text() if versions.exists() else ""
-    for f in sorted(folder.iterdir()):
-        stem = f.name.removesuffix(".thumb.jpg").rsplit(".", 1)[0]
-        if f.name.endswith(_PUBLISHED) and stem not in stems:
-            if f'"{f.name}"' in tracked:
-                portolan("rm", "-f", f"iso3/{base}/{f.name}")
-            else:
-                f.unlink()
 
 
 def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
@@ -184,12 +127,7 @@ def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
     stamps = [r["src_update"] or r["src_date"] for r in group]
     stamp = max((s for s in stamps if s), default=None)
     when = ["--datetime", str(stamp)[:10]] if stamp else []
-    # add only re-applies a changed metadata.yaml to a collection with --force.
-    force = ["--force"] if app.config.FORCE_PMTILES or meta_changed else []
     tile_collection(folder, force=app.config.FORCE_PMTILES)
-    portolan("add", f"iso3/{base}", *when, *force)
+    # Without --force, add skips a changed metadata.yaml or sidecar JSON.
+    portolan("add", f"iso3/{base}", *when, "--force")
     return True
-
-
-if __name__ == "__main__":
-    main()

@@ -3,7 +3,7 @@
 import re
 
 import duckdb
-from topo_tools.api import code_create, topo_clean
+from topo_tools.api import code_create
 
 from app._01_sources.schema import SOURCES_SQL, columns
 from app._01_sources.utils import catalog_path
@@ -83,10 +83,10 @@ def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
         """,
             [key.upper(), *row],
         )
-        coded = STAGE_DIR / f"{key}_coded.parquet"
+        dest = STAGE_DIR / f"{key}.parquet"
         code_create(
             seed,
-            coded,
+            dest,
             STAGE_DIR / f"{key}_issues.parquet",
             root_code=root,
             delimiter="-",
@@ -94,11 +94,7 @@ def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
             name_field=NAME_FIELD,
             code_field=CODE_FIELD,
         )
-        dest = STAGE_DIR / f"{key}.parquet"
-        # edge_mosaic raises unless every input is a clean coverage.
-        topo_clean(coded, dest, STAGE_DIR / f"{key}_clean_issues.parquet", threads=4)
         seed.unlink()
-        coded.unlink()
         paths.append(str(dest))
     return paths
 

@@ -17,7 +17,7 @@ from .config import (
     DOWNLOAD_DIR,
     SRC,
 )
-from .schema import conform, write_meta
+from .schema import conform, conform_extended, write_meta
 from .utils import catalog_path, download, get_json, meta_path, published_src
 
 logger = getLogger(__name__)
@@ -89,7 +89,7 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
             _split(conn, original, lvl, parts)
         else:
             extended = f"SELECT * FROM read_parquet('{paths['extended']}')"
-            conform(conn, extended, lvl, catalog_path("extended", ext_keys[0]))
+            conform_extended(conn, extended, lvl, catalog_path("extended", ext_keys[0]))
         langs = conn.execute(
             f"SELECT any_value(lang), any_value(lang1), any_value(lang2) "
             f"FROM read_parquet('{paths['extended']}')"
@@ -152,7 +152,7 @@ def _split(
         extended = subset.with_name(f"{part.lower()}_extended.parquet")
         edge_extend(subset, extended)
         select = f"SELECT * FROM read_parquet('{extended}')"
-        conform(conn, select, lvl, catalog_path("extended", part.lower()))
+        conform_extended(conn, select, lvl, catalog_path("extended", part.lower()))
 
 
 def _data(coll: dict) -> dict:

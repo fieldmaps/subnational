@@ -14,7 +14,7 @@ from topo_tools.api import edge_extend
 
 from app._01_sources._01b_publish import publish
 from app._01_sources.config import DOWNLOAD_DIR
-from app._01_sources.schema import conform, write_meta
+from app._01_sources.schema import conform, conform_extended, write_meta
 from app._01_sources.utils import catalog_path, meta_path, published_src
 from app._02_build._02a_inputs import adm0_path
 from app._02_build.config import ADM0_HUMANITARIAN
@@ -294,7 +294,7 @@ def _write_extended(
     )
     extended = WORK_DIR / f"{cc}_extended.parquet"
     edge_extend(raw, extended)
-    conform(
+    conform_extended(
         conn,
         f"SELECT * FROM read_parquet('{extended}')",
         lvl,

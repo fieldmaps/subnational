@@ -1,11 +1,15 @@
 """cod-ab extended schema shared by every extended-tier collection."""
 
 import json
+from logging import getLogger
 from pathlib import Path
 
 import duckdb
+from topo_tools.api import topo_clean, topo_detect
 
-from app.config import CATALOG_DIR, PARQUET_OPTS
+from app.config import CATALOG_DIR, PARQUET_OPTS, TMP_DIR
+
+logger = getLogger(__name__)
 
 _LEVEL_COLS = ("name", "name1", "name2", "name3", "pcode")
 _TAIL = (
@@ -82,6 +86,23 @@ def conform(
     conn.execute(
         f"COPY (SELECT {parts} FROM ({select_sql})) TO '{dest}' {PARQUET_OPTS}"
     )
+
+
+def conform_extended(
+    conn: duckdb.DuckDBPyConnection, select_sql: str, lvl: int, dest: Path
+) -> None:
+    """Conform an extended layer, then topo_clean it if topo_detect finds defects."""
+    conform(conn, select_sql, lvl, dest)
+    work = TMP_DIR / "sources" / "coverage"
+    work.mkdir(parents=True, exist_ok=True)
+    issues = work / f"{dest.stem}_issues.parquet"
+    topo_detect(dest, issues, threads=4)
+    if not conn.execute(f"SELECT count(*) FROM '{issues}'").fetchall()[0][0]:
+        return
+    logger.warning("%s: coverage defects, cleaning", dest.name)
+    clean = work / f"{dest.stem}_clean.parquet"
+    topo_clean(dest, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
+    conform(conn, f"SELECT * FROM read_parquet('{clean}')", lvl, dest)
 
 
 def write_meta(meta: dict, dest: Path) -> None:

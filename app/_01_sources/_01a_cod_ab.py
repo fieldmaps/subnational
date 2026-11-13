@@ -79,10 +79,14 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
             portolan("rm", "-f", f"iso3/{key}")
         _drop_stale(key, rows)
         paths = {t: _fetch(c, f"{t}/{layer}", t) for t, c in colls.items()}
-        original = f"SELECT * FROM read_parquet('{paths['original']}')"
+        original = (
+            f"SELECT * FROM read_parquet('{paths['original']}'), ("
+            f"SELECT any_value(iso2) AS iso2, any_value(iso3) AS iso3 "
+            f"FROM read_parquet('{paths['extended']}'))"
+        )
         conform(conn, original, lvl, catalog_path("original", key))
         if len(parts) > 1:
-            _split(conn, paths["original"], lvl, parts)
+            _split(conn, original, lvl, parts)
         else:
             extended = f"SELECT * FROM read_parquet('{paths['extended']}')"
             conform(conn, extended, lvl, catalog_path("extended", ext_keys[0]))
@@ -126,7 +130,7 @@ def _drop_stale(key: str, rows: dict[tuple[str, str], dict]) -> None:
 
 
 def _split(
-    conn: duckdb.DuckDBPyConnection, original: Path, lvl: int, parts: tuple
+    conn: duckdb.DuckDBPyConnection, original: str, lvl: int, parts: tuple
 ) -> None:
     """Write one extended layer per ADM0 clip part from the units inside it."""
     from app._02_build._02a_inputs import adm0_clip_sql  # noqa: PLC0415 (import cycle)
@@ -137,7 +141,7 @@ def _split(
         conn.execute(
             f"""--sql
             COPY (
-                SELECT o.* FROM read_parquet('{original}') o
+                SELECT o.* FROM ({original}) o
                 JOIN ({adm0_clip_sql()}) a
                   ON a.adm0_src = ?
                  AND ST_Within(ST_PointOnSurface(o.geometry), a.geometry)

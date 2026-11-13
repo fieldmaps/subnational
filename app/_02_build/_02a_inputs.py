@@ -12,8 +12,7 @@ from .config import (
     ADM0_DISAGGREGATED,
     ADM0_HUMANITARIAN,
     ADM0_LOCAL,
-    CLIP_ADD,
-    CLIP_DROP,
+    CLIP_PARTS,
     CODE_FIELD,
     MATCH_KEY,
     NAME_FIELD,
@@ -133,41 +132,52 @@ def _keys(tier: str) -> list[str]:
 def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
     """Build adm0_clip, adm0_wld (one row per iso_3), and adm0_bounds (per match key).
 
-    adm0_clip is the humanitarian view with CLIP_DROP swapped for CLIP_ADD;
-    adm0_bounds carries the world-view columns that edge_mosaic copies over.
+    adm0_bounds carries the parent's world-view columns that edge_mosaic copies over.
     """
-    drop = ", ".join(f"'{s}'" for s in CLIP_DROP)
-    add = ", ".join(f"'{s}'" for s in CLIP_ADD)
+    conn.execute(f"CREATE OR REPLACE TABLE adm0_clip AS {adm0_clip_sql()}")
     conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE adm0_clip AS
-        SELECT * FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
-        WHERE adm0_src NOT IN ({drop})
-        UNION ALL BY NAME
-        SELECT * FROM read_parquet('{adm0_path(ADM0_DISAGGREGATED)}')
-        WHERE adm0_src IN ({add})
-    """)
-    conn.execute("""--sql
         CREATE OR REPLACE TABLE adm0_wld AS
-        SELECT * EXCLUDE (geometry) FROM adm0_clip
+        SELECT * EXCLUDE (geometry) FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
         QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
     """)
     wld = ", ".join(f"w.{c}" for c in WLD_COLS)
-    conn.execute(rf"""--sql
+    keys = [k.upper() for k in _keys("extended")]
+    # A part keeps its own key when an input has it, else merges under its iso_3.
+    conn.execute(
+        f"""--sql
         CREATE OR REPLACE TABLE adm0_bounds AS
         WITH keyed AS (
-            SELECT adm0_src AS {MATCH_KEY}, ST_Union_Agg(geometry)::GEOMETRY AS geom
+            SELECT CASE WHEN list_contains($keys, adm0_src) THEN adm0_src
+                        WHEN list_contains($keys, iso_3) THEN iso_3
+                        ELSE adm0_src END AS {MATCH_KEY},
+                   iso_3, geometry
             FROM adm0_clip
-            GROUP BY adm0_src
-            UNION ALL
-            SELECT iso_3 AS {MATCH_KEY}, ST_Union_Agg(geometry)::GEOMETRY AS geom
-            FROM adm0_clip
-            WHERE iso_3 != adm0_src
-            GROUP BY iso_3
+        ), merged AS (
+            SELECT {MATCH_KEY}, any_value(iso_3) AS iso_3,
+                   ST_Union_Agg(geometry)::GEOMETRY AS geom
+            FROM keyed
+            GROUP BY {MATCH_KEY}
         )
         SELECT k.{MATCH_KEY}, {wld}, k.geom
-        FROM keyed k
-        LEFT JOIN adm0_wld w ON regexp_replace(k.{MATCH_KEY}, '_\d+$', '') = w.iso_3
-    """)
+        FROM merged k
+        LEFT JOIN adm0_wld w ON k.iso_3 = w.iso_3
+    """,
+        {"keys": keys},
+    )
+
+
+def adm0_clip_sql() -> str:
+    """Return the humanitarian ADM0 with each CLIP_PARTS parent split into parts."""
+    parts = ", ".join(f"('{s}', '{d}')" for s, d in CLIP_PARTS.items())
+    return f"""--sql
+        WITH p(src, dst) AS (VALUES {parts})
+        SELECT * FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
+        WHERE adm0_src NOT IN (SELECT split_part(dst, '_', 1) FROM p)
+        UNION ALL BY NAME
+        SELECT d.* REPLACE (p.dst AS adm0_src, split_part(p.dst, '_', 1) AS iso_3)
+        FROM read_parquet('{adm0_path(ADM0_DISAGGREGATED)}') d
+        JOIN p ON d.adm0_src = p.src
+    """
 
 
 def adm0_path(rel: str) -> str:

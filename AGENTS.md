@@ -18,7 +18,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 `catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `iso3/{base}/` holds one source's layers per base iso3; `global/admin{n}/` holds the export. Each `iso3/{base}/` collection has:
 
-- `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). Multi-extent keys (`pak_1_extended`, `pak_2_extended`) sit beside the single `{base}_original.parquet`.
+- `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; for cod-ab, `PARTS` (`app/config.py`) lists them and step 1 splits the original by part and extends each.
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.
 - Both tiers use the cod-ab extended schema for every source (`adm{n}_name..name3, adm{n}_pcode` for n = lvl..0, then `valid_on, valid_to, version, lang..lang3, iso2, iso3, geometry`), defined in `app/_01_sources/schema.py`.
 - `original` tier: the source's own geometry (for `erm`, its units dissolved before extension); `extended` tier: that layer extended past its coastline.
@@ -32,7 +32,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 `archive/` (gitignored, never read) holds every source's layers per iso3 as `archive/{src}/{base}/`, for switching an iso3 to another source by hand. The build reads every published extended layer and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
 
-ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`).
+ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`). The clip is the humanitarian ADM0 with each `CLIP_PARTS` parent (`app/_02_build/config.py`) replaced by its disaggregated parts, renamed `{ISO3}_{n}`. An input key matching a part covers that part; otherwise every part of its iso3 merges under the key.
 
 ## Key Constraints
 

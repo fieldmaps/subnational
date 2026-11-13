@@ -7,8 +7,18 @@ ADM0_LOCAL = PKG_DIR.parent.parent / "international" / "catalog"
 ADM0_HUMANITARIAN = "odbl/humanitarian/adm0-polygons/adm0_polygons.parquet"
 ADM0_DISAGGREGATED = "odbl/disaggregated/adm0-polygons/adm0_polygons.parquet"
 
-CLIP_DROP = ("GEO", "SRB", "XJK")
-CLIP_ADD = ("GEO_1", "GEO_2", "GEO_3", "SRB_1", "SRB_2", "XKX", "XAK", "XSS", "XJK")
+# Disaggregated adm0_src -> clip part replacing its humanitarian parent (prefix).
+CLIP_PARTS = {
+    "SRB_1": "SRB_1",
+    "SRB_2": "SRB_2",
+    "XKX": "SRB_3",
+    "GEO_1": "GEO_1",
+    "GEO_2": "GEO_2",
+    "GEO_3": "GEO_3",
+    "XJK": "XJK_1",
+    "XAK": "XJK_2",
+    "XSS": "XJK_3",
+}
 
 NAME_FIELD = "adm{n}_name"
 CODE_FIELD = "adm{n}_id"

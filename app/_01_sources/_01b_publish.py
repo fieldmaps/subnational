@@ -1,6 +1,8 @@
 """Register each catalog/iso3/{base} collection with portolan."""
 
+import json
 from logging import getLogger
+from pathlib import Path
 
 import duckdb
 
@@ -97,25 +99,29 @@ def _license_name(src_lic: str | None, src_url: str | None) -> str:
 
 def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
     """Write metadata.yaml, then tile and `portolan add` if anything changed."""
-    src = group[0]["src"]
+    srcs = list(dict.fromkeys(r["src"] for r in group))
     row = next((r for r in group if r["tier"] == "original"), group[0])
     lvl = max(r["src_lvl"] for r in group)
-    providers = [
-        {"name": row[col], "roles": [role]}
-        for col, role in (("src_name", "producer"), ("src_name1", "processor"))
-        if row[col]
-    ]
+    providers = list(
+        {
+            r[col]: {"name": r[col], "roles": [role]}
+            for r in group
+            for col, role in (("src_name", "producer"), ("src_name1", "processor"))
+            if r[col]
+        }.values()
+    )
     files = "; ".join(f"{r['key']}_{r['tier']}: {TIERS[r['tier']]}" for r in group)
     folder = ISO3_DIR / base
-    notice = f" {SRC_NOTICES[src]}" if src in SRC_NOTICES else ""
+    names = " and ".join(SRC_NAMES[s] for s in srcs)
+    notice = "".join(f" {SRC_NOTICES[s]}" for s in srcs if s in SRC_NOTICES)
     meta_changed = write_metadata(
         folder,
         title=title,
-        description=f"{SRC_NAMES[src]}, admin level {lvl}. {files}.{notice}",
+        description=f"{names}, admin level {lvl}. {files}.{notice}",
         **license_fields(row["src_lic"], row["src_url"]),
         providers=[*providers, HOST],
         source_url=row["via"],
-        keywords=[row["iso3"], src, f"adm{lvl}"],
+        keywords=[row["iso3"], *srcs, f"adm{lvl}"],
     )
     if not (
         app.config.FORCE_PMTILES
@@ -128,6 +134,33 @@ def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
     stamp = max((s for s in stamps if s), default=None)
     when = ["--datetime", str(stamp)[:10]] if stamp else []
     tile_collection(folder, force=app.config.FORCE_PMTILES)
+    _reset_style(folder)
     # Without --force, add skips a changed metadata.yaml or sidecar JSON.
     portolan("add", f"iso3/{base}", *when, "--force")
     return True
+
+
+def _reset_style(folder: Path) -> None:
+    """Make add rebuild the style and thumbnail when they miss the first extended layer.
+
+    portolan builds both from the first data asset in collection.json.
+    """
+    first = min(p.stem for p in folder.glob("*_extended.parquet"))
+    style = folder / "styles" / "default.json"
+    if not style.exists() or f"/{first}.pmtiles" in style.read_text():
+        return
+    path = folder / "collection.json"
+    coll = json.loads(path.read_text())
+    coll["assets"] = dict(
+        sorted(coll["assets"].items(), key=lambda kv: ("original" in kv[0], kv[0]))
+    )
+    coll["links"] = [
+        link
+        for link in coll["links"]
+        if link["rel"] != "pmtiles" or (folder / link["href"]).exists()
+    ]
+    path.write_text(json.dumps(coll, indent=2) + "\n")
+    style.unlink()
+    for thumb in folder.glob("*.thumb.jpg"):
+        if thumb.name != f"{first}.thumb.jpg":
+            portolan("rm", "-f", f"iso3/{folder.name}/{thumb.name}")

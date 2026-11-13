@@ -1,5 +1,7 @@
 """Stage the published per-iso3 inputs and build the ADM0 clip boundary."""
 
+import re
+
 import duckdb
 from topo_tools.api import code_create, topo_clean
 
@@ -20,6 +22,7 @@ from .config import (
 )
 
 STAGE_DIR = TMP_DIR / "build" / "inputs"
+_LATIN = r"[\p{Latin}\p{Common}\p{Inherited}]+"
 _META = (
     "src_lvl",
     "src_lang",
@@ -64,7 +67,7 @@ def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
         root = key.upper() if stamp is None else f"{key.upper()}-{stamp:%Y%m%d}"
         have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{path}'").fetchall()}
         cols = [
-            _col(c, t)
+            _col(c, t, have)
             for name, t in columns(MAX_LVL)
             for c in ((f"{name[:4]}_id", name) if _is_id_slot(name) else (name,))
             if _src(c) in have
@@ -110,8 +113,17 @@ def _src(col: str) -> str:
     return col.replace("_id", "_pcode") if col.endswith("_id") else col
 
 
-def _col(col: str, typ: str) -> str:
-    return f'CAST("{_src(col)}" AS {typ}) AS "{col}"'
+def _col(col: str, typ: str, have: set[str]) -> str:
+    """Cast `col`; a null adm{n}_name takes the first Latin-script name1..3."""
+    value = f'"{_src(col)}"'
+    if re.fullmatch(r"adm\d_name", col):
+        alts = [f"{col}{i}" for i in (1, 2, 3) if f"{col}{i}" in have]
+        latin = (
+            f"""CASE WHEN regexp_full_match("{a}", '{_LATIN}') THEN "{a}" END"""
+            for a in alts
+        )
+        value = f"coalesce({', '.join((value, *latin))})"
+    return f'CAST({value} AS {typ}) AS "{col}"'
 
 
 def _type(col: str) -> str:

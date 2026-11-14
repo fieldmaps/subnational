@@ -26,7 +26,7 @@ _VIEW = (
 )
 _FILES = (
     "admin{n}.parquet: polygons, dissolved from the finest source level; "
-    "admin{n}_points.parquet: one label point per polygon with its code, names "
+    "admin{n}_points.parquet: one label point per polygon with its id, names "
     "and pcode; admin{n}_lines.parquet: boundary lines for levels 1 to {n}, each "
     "side labelled with the units at the line's adm_lvl. Points and lines carry "
     "no country-level columns, coastlines or international borders: use the admin "

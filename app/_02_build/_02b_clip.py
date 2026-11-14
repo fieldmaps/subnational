@@ -57,6 +57,7 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
         CLIP_DIR / "{x}.parquet",
         name_field=NAME_FIELD,
         code_field=CODE_FIELD,
+        min_level=1,
         clean=False,
         block=False,
         threads=4,
@@ -74,7 +75,7 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
         """)
         conn.execute(f"""--sql
             CREATE OR REPLACE TABLE adm{lvl}_points AS
-            SELECT * EXCLUDE (adm_lvl) RENAME (geometry AS geom)
+            SELECT * RENAME (geometry AS geom)
             FROM read_parquet('{CLIP_DIR / "points.parquet"}')
             WHERE adm_lvl = {lvl}
         """)

@@ -8,6 +8,7 @@ from argparse import ArgumentParser
 from datetime import date
 from logging import getLogger
 from pathlib import Path
+from typing import NamedTuple
 
 import duckdb
 from topo_tools.api import edge_extend
@@ -16,7 +17,7 @@ from app._01_sources._01b_publish import publish
 from app._01_sources.config import DOWNLOAD_DIR
 from app._01_sources.schema import conform, conform_extended, write_meta
 from app._01_sources.utils import catalog_path, meta_path, published_src
-from app._02_build._02a_inputs import adm0_path
+from app._02_build._02a_inputs import _LATIN, adm0_path
 from app._02_build.config import ADM0_HUMANITARIAN
 from app.config import MAX_LVL, PARQUET_OPTS
 from app.utils import get_conn
@@ -32,6 +33,8 @@ TAA_KEEP = (1, 3, 4, 5, 7)
 TAA_COASTAL = 5
 # ERM ICC folded into another country's layer.
 MERGE = {"ND": "GB"}
+# ERM ICC whose units under one adm1 code form another ISO country: (iso2, name).
+SPLIT = {"FI": {"FI72100000": ("AX", "Åland Islands")}}
 # ERM orders (USE 2..6) left out, matching Mapbox Boundaries v4.7 levels.
 SKIP = {
     "DE": {3, 5},
@@ -56,7 +59,20 @@ LANGS = {
     "lav": "lv", "lit": "lt", "mkd": "mk", "mlt": "mt", "nor": "no",
     "pol": "pl", "por": "pt", "roh": "rm", "rum": "ro", "slo": "sk",
     "slv": "sl", "spa": "es", "swe": "sv", "ukr": "uk", "val": "ca",
+    "wel": "cy",
 }  # fmt: skip
+
+
+class Layer(NamedTuple):
+    """One output layer: ERM ICC or SPLIT iso2, iso3, adm0 names, languages, date."""
+
+    icc: str
+    iso3: str
+    adm0: tuple
+    langs: list
+    valid_on: date | None
+
+
 _ORG = re.compile(r"<gmd:organisationName>\s*<gco:CharacterString>([^<]+)")
 _STAMP = re.compile(r"<gmd:dateStamp>\s*<gco:Date>([^<]+)")
 
@@ -83,7 +99,7 @@ def main() -> None:
     for cc in countries:
         published = published_src(iso3[cc].lower()) == SRC
         if published and (args.icc is None or cc in args.icc):
-            _country(conn, args.root, cc, iso3[cc])
+            _country(conn, args.root, cc, iso3)
     conn.close()
     if not args.skip_publish:
         publish()
@@ -122,9 +138,10 @@ def _load(conn: duckdb.DuckDBPyConnection, root: Path) -> None:
     """)
 
 
-def _country(conn: duckdb.DuckDBPyConnection, root: Path, cc: str, iso3: str) -> None:
-    """Write one country's original and extended layers plus metadata."""
-    key = iso3.lower()
+def _country(
+    conn: duckdb.DuckDBPyConnection, root: Path, cc: str, iso3: dict[str, str]
+) -> None:
+    """Write original and extended layers plus metadata for cc and its SPLIT parts."""
     present = conn.execute(
         "SELECT "
         + ", ".join(f"bool_or(SHN{u - 1} <> 'UNK')" for u in range(2, 7))
@@ -145,15 +162,78 @@ def _country(conn: duckdb.DuckDBPyConnection, root: Path, cc: str, iso3: str) ->
         raise ValueError(msg)
     _pieces(conn, cc, orders)
     _check(conn, cc, lvl)
-    _write_extended(conn, cc, iso3, lvl)
-    _write_original(cc, key, lvl)
-    counts = conn.execute(
-        "SELECT "
-        + ", ".join(f"count(DISTINCT c{i})" for i in range(1, lvl + 1))
-        + " FROM p"
-    ).fetchall()[0]
-    logger.info("%s: orders %s, units per level %s", cc, orders, counts)
-    _write_meta(conn, root, cc, iso3, lvl)
+    adm0 = conn.execute(
+        "SELECT name_english_short, name_national FROM cc_names WHERE icc = ?", [cc]
+    ).fetchall()
+    split = SPLIT.get(cc, {})
+    layers = [
+        (
+            cc,
+            adm0[0] if adm0 else (None, None),
+            "NOT list_contains(?::VARCHAR[], c1)",
+            [*split],
+        )
+    ]
+    layers += [
+        (icc, (name, None), "c1 = ?", code) for code, (icc, name) in split.items()
+    ]
+    for icc, names, where, arg in layers:
+        conn.execute(
+            f"CREATE OR REPLACE TABLE pt AS SELECT * FROM p WHERE {where}", [arg]
+        )
+        layer = Layer(icc, iso3[icc], names, *_names(conn, lvl))
+        _write_extended(conn, layer, lvl)
+        _write_original(icc, layer.iso3.lower(), lvl)
+        counts = conn.execute(
+            "SELECT "
+            + ", ".join(f"count(DISTINCT c{i})" for i in range(1, lvl + 1))
+            + " FROM pt"
+        ).fetchall()[0]
+        logger.info(
+            "%s: orders %s, units per level %s, langs %s",
+            icc, orders, counts, layer.langs,
+        )  # fmt: skip
+        _write_meta(root, cc, layer, lvl)
+
+
+def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None]:
+    """Build `un`, one name per layer language for every unit in `pt`, and the date.
+
+    Languages rank by units named in them (max 4); the first falls back to a Latin name.
+    """
+    codes = " UNION ".join(f"SELECT c{i} FROM pt" for i in range(1, lvl + 1))
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TABLE un_pairs AS
+        SELECT code, i, names[i] AS name, langs[i] AS lang
+        FROM (
+            SELECT code, names, langs, unnest(generate_series(1, len(names))) AS i
+            FROM nam WHERE code IN ({codes})
+        )
+    """)
+    langs, valid_on = conn.execute(f"""--sql
+        SELECT
+            (SELECT list(lang ORDER BY n DESC, lang)[1:4] FROM (
+                SELECT lang, count(DISTINCT code) AS n FROM un_pairs
+                WHERE lang IS NOT NULL GROUP BY lang
+            )),
+            (SELECT max(valid_on) FROM nam WHERE code IN ({codes}))
+    """).fetchall()[0]
+    langs = [*(langs or []), None, None, None, None][:4]
+    first = "min_by(name, i) FILTER (lang = ${})"
+    conn.execute(
+        f"""--sql
+        CREATE OR REPLACE TABLE un AS
+        SELECT code,
+            coalesce(
+                {first.format(1)},
+                min_by(name, i) FILTER (regexp_full_match(name, '{_LATIN}'))
+            ) AS n0,
+            {first.format(2)} AS n1, {first.format(3)} AS n2, {first.format(4)} AS n3
+        FROM un_pairs GROUP BY code
+    """,
+        langs,
+    )
+    return langs, valid_on
 
 
 def _pieces(conn: duckdb.DuckDBPyConnection, cc: str, orders: list[int]) -> None:
@@ -256,19 +336,17 @@ def _check(conn: duckdb.DuckDBPyConnection, cc: str, lvl: int) -> None:
         raise ValueError(msg)
 
 
-def _write_extended(
-    conn: duckdb.DuckDBPyConnection, cc: str, iso3: str, lvl: int
-) -> None:
-    """Dissolve pieces per leaf, reproject, extend with topo-tools, then conform."""
+def _write_extended(conn: duckdb.DuckDBPyConnection, layer: Layer, lvl: int) -> None:
+    """Dissolve `pt` per leaf, reproject, extend with topo-tools, then conform."""
     group = ", ".join(f"c{i}" for i in range(1, lvl + 1))
     levels = ", ".join(
-        f"n{i}.names[1] AS adm{i}_name, n{i}.names[2] AS adm{i}_name1, "
-        f"n{i}.names[3] AS adm{i}_name2, n{i}.names[4] AS adm{i}_name3, "
+        f"n{i}.n0 AS adm{i}_name, n{i}.n1 AS adm{i}_name1, "
+        f"n{i}.n2 AS adm{i}_name2, n{i}.n3 AS adm{i}_name3, "
         f"d.c{i} AS adm{i}_pcode"
         for i in range(1, lvl + 1)
     )
-    joins = " ".join(f"JOIN nam n{i} ON n{i}.code = d.c{i}" for i in range(1, lvl + 1))
-    raw = WORK_DIR / f"{cc}.parquet"
+    joins = " ".join(f"JOIN un n{i} ON n{i}.code = d.c{i}" for i in range(1, lvl + 1))
+    raw = WORK_DIR / f"{layer.icc}.parquet"
     conn.execute(
         f"""--sql
         COPY (
@@ -276,29 +354,27 @@ def _write_extended(
                 SELECT {group}, ST_Transform(
                     ST_MakeValid(ST_Union_Agg(geom)), 'EPSG:4258', 'EPSG:4326', true
                 ) AS geom
-                FROM p
+                FROM pt
                 GROUP BY {group}
             )
             SELECT {levels},
-                c.name_english_short AS adm0_name, c.name_national AS adm0_name1,
-                ? AS adm0_pcode,
-                n{lvl}.langs[1] AS lang, n{lvl}.langs[2] AS lang1,
-                n{lvl}.langs[3] AS lang2, n{lvl}.langs[4] AS lang3,
-                n{lvl}.valid_on,
+                ?::VARCHAR AS adm0_name, ?::VARCHAR AS adm0_name1, ? AS adm0_pcode,
+                ?::VARCHAR AS lang, ?::VARCHAR AS lang1,
+                ?::VARCHAR AS lang2, ?::VARCHAR AS lang3,
+                ?::DATE AS valid_on,
                 ? AS iso2, ? AS iso3, d.geom AS geometry
             FROM d {joins}
-            LEFT JOIN cc_names c ON c.icc = ?
         ) TO '{raw}' {PARQUET_OPTS}
     """,
-        [cc, cc, iso3, cc],
+        [*layer.adm0, layer.icc, *layer.langs, layer.valid_on, layer.icc, layer.iso3],
     )
-    extended = WORK_DIR / f"{cc}_extended.parquet"
+    extended = WORK_DIR / f"{layer.icc}_extended.parquet"
     edge_extend(raw, extended)
     conform_extended(
         conn,
         f"SELECT * FROM read_parquet('{extended}')",
         lvl,
-        catalog_path("extended", iso3.lower()),
+        catalog_path("extended", layer.iso3.lower()),
     )
 
 
@@ -314,9 +390,7 @@ def _write_original(cc: str, key: str, lvl: int) -> None:
         )
 
 
-def _write_meta(
-    conn: duckdb.DuckDBPyConnection, root: Path, cc: str, iso3: str, lvl: int
-) -> None:
+def _write_meta(root: Path, cc: str, layer: Layer, lvl: int) -> None:
     """Write both tiers' metadata rows, naming each ICC's mapping agency."""
     iccs = [cc, *(a for a, b in MERGE.items() if b == cc)]
     agencies, stamps = [], []
@@ -327,28 +401,15 @@ def _write_meta(
             agencies.append(org[1].strip())
         if stamp := _STAMP.search(text):
             stamps.append(date.fromisoformat(stamp[1].strip()[:10]))
-    langs, src_date = conn.execute(
-        """--sql
-        SELECT
-            (SELECT list(l ORDER BY n DESC) FROM (
-                SELECT langs[1] AS l, count(*) AS n FROM nam
-                WHERE list_contains($1, icc) AND langs[1] IS NOT NULL
-                GROUP BY l
-            )),
-            (SELECT max(valid_on) FROM nam WHERE list_contains($1, icc))
-    """,
-        [iccs],
-    ).fetchall()[0]
-    langs = (langs or []) + [None, None, None]
     row = {
-        "key": iso3.lower(),
-        "iso3": iso3,
+        "key": layer.iso3.lower(),
+        "iso3": layer.iso3,
         "src": SRC,
         "src_lvl": lvl,
-        "src_lang": langs[0],
-        "src_lang1": langs[1],
-        "src_lang2": langs[2],
-        "src_date": src_date,
+        "src_lang": layer.langs[0],
+        "src_lang1": layer.langs[1],
+        "src_lang2": layer.langs[2],
+        "src_date": layer.valid_on,
         "src_update": max(stamps, default=None),
         "src_name": "; ".join(agencies) or None,
         "src_name1": "EuroGeographics",
@@ -358,7 +419,7 @@ def _write_meta(
         "via": SRC_URL,
     }
     for tier in ("extended", "original"):
-        write_meta({**row, "tier": tier}, meta_path(iso3.lower()))
+        write_meta({**row, "tier": tier}, meta_path(layer.iso3.lower()))
 
 
 if __name__ == "__main__":

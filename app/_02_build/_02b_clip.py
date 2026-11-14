@@ -10,7 +10,7 @@ from topo_tools.api import edge_mosaic, package, schema_fill
 from app.config import PARQUET_OPTS, TMP_DIR
 
 from ._02a_inputs import input_paths, stage_extended
-from .config import CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
+from .config import ADM0_FILL, CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
 
 logger = getLogger(__name__)
 
@@ -36,6 +36,7 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
         merge=True,
         overlay_include=[MATCH_KEY, *WLD_COLS],
         input_exclude=[MATCH_KEY],
+        fill=ADM0_FILL,
         threads=4,
         tmp_dir=CLIP_DIR,
         # The global coverage clean exits the process on a 16 GB machine.
@@ -45,22 +46,19 @@ def clip_and_package(conn: duckdb.DuckDBPyConnection) -> list[int]:
 
     filled_path = CLIP_DIR / "filled.parquet"
     schema_fill(
-        input_path=_backfill_adm0_identity(conn, clipped_path),
+        input_path=clipped_path,
         output_path=filled_path,
         name_field=NAME_FIELD,
         code_field=CODE_FIELD,
     )
-    # package_points rejects schema_fill's adm_lvl column, so drop it first.
-    package_input = CLIP_DIR / "package_input.parquet"
-    conn.execute(f"""--sql
-        COPY (SELECT * EXCLUDE (adm_lvl) FROM read_parquet('{filled_path}'))
-        TO '{package_input}' {PARQUET_OPTS}
-    """)
+    # Clip seams are accepted; validation errors are reported, not raised.
     package(
-        package_input,
+        filled_path,
         CLIP_DIR / "{x}.parquet",
         name_field=NAME_FIELD,
         code_field=CODE_FIELD,
+        clean=False,
+        block=False,
         threads=4,
         tmp_dir=CLIP_DIR,
     )
@@ -97,24 +95,3 @@ def _log_issues(conn: duckdb.DuckDBPyConnection, issues_path: Path) -> None:
         f"SELECT kind, count(*) FROM read_parquet('{issues_path}') GROUP BY ALL"
     ).fetchall():
         logger.warning("edge_mosaic: %d %s issue(s), see %s", count, kind, issues_path)
-
-
-def _backfill_adm0_identity(
-    conn: duckdb.DuckDBPyConnection, clipped_path: Path
-) -> Path:
-    """Backfill adm0_* and iso2/iso3 from adm0_wld for gap-filled territories only."""
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE src_clipped AS
-        SELECT * FROM read_parquet('{clipped_path}')
-    """)
-    conn.execute("""--sql
-        UPDATE src_clipped SET
-            adm0_id = w.adm0_id, adm0_pcode = w.adm0_src, adm0_name = w.adm0_name,
-            adm0_name1 = w.adm0_name1, adm0_name2 = w.adm0_name2,
-            iso2 = w.iso_2, iso3 = w.iso_3
-        FROM adm0_wld w
-        WHERE src_clipped.iso_3 = w.iso_3 AND src_clipped.adm0_id IS NULL
-    """)
-    path = clipped_path.with_name("clipped_backfilled.parquet")
-    conn.execute(f"COPY src_clipped TO '{path}' {PARQUET_OPTS}")
-    return path

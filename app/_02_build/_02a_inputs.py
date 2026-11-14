@@ -12,6 +12,7 @@ from app.config import MAX_LVL, PARQUET_OPTS, TMP_DIR
 from .config import (
     ADM0_BASE,
     ADM0_DISAGGREGATED,
+    ADM0_FILL,
     ADM0_HUMANITARIAN,
     ADM0_LOCAL,
     CLIP_PARTS,
@@ -149,8 +150,10 @@ def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
         QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
     """)
     wld = ", ".join(f"w.{c}" for c in WLD_COLS)
+    part = [c for c in ADM0_FILL.values() if c not in WLD_COLS]
     keys = [k.upper() for k in _keys("extended")]
     # A part keeps its own key when an input has it, else merges under its iso_3.
+    # Fill columns come from the part's own row: unmatched keys are single parts.
     conn.execute(
         f"""--sql
         CREATE OR REPLACE TABLE adm0_bounds AS
@@ -158,17 +161,19 @@ def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
             SELECT CASE WHEN list_contains($keys, adm0_src) THEN adm0_src
                         WHEN list_contains($keys, iso_3) THEN iso_3
                         ELSE adm0_src END AS {MATCH_KEY},
-                   iso_3, geometry
+                   iso_3, {", ".join(part)}, geometry
             FROM adm0_clip
         ), merged AS (
-            SELECT {MATCH_KEY}, any_value(iso_3) AS iso_3,
+            SELECT {MATCH_KEY}, arg_min(iso_3, adm0_id) AS iso_3,
+                   {", ".join(f"arg_min({c}, adm0_id) AS {c}" for c in part)},
                    ST_Union_Agg(geometry)::GEOMETRY AS geom
             FROM keyed
             GROUP BY {MATCH_KEY}
         )
-        SELECT k.{MATCH_KEY}, {wld}, k.geom
+        SELECT k.{MATCH_KEY}, {wld}, {", ".join(f"k.{c}" for c in part)}, k.geom
         FROM merged k
         LEFT JOIN adm0_wld w ON k.iso_3 = w.iso_3
+        ORDER BY k.{MATCH_KEY}
     """,
         {"keys": keys},
     )

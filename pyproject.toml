@@ -13,7 +13,7 @@ dependencies = [
     "psutil>=7.2.2",
     "python-dotenv>=1.2.4",
     "tenacity>=9.2.1",
-    "topo-tools>=0.20.0",
+    "topo-tools>=0.21.1",
     "tylertoo>=0.8.0",
 ]
 

@@ -1,7 +1,7 @@
 """Pipeline entry point: runs the requested step, or all of them in order."""
 
 from argparse import ArgumentParser
-from os import getenv
+from os import environ, getenv
 
 import app.config as _config
 from app import _01_sources, _02_build, _03_export
@@ -51,6 +51,8 @@ def _parse() -> str | None:
     _config.PUSH = args.push
     _config.FORCE_PMTILES = args.force_pmtiles
     _config.DEBUG = args.debug
+    # Spawned build workers re-read DEBUG from the environment.
+    environ["DEBUG"] = str(args.debug)
     return args.step
 
 

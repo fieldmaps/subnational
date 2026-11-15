@@ -84,18 +84,21 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     if missing := want - have:
         msg = f"adm{lvl}_polygons is missing {sorted(missing)}"
         raise ValueError(msg)
-    n_poly, n_ids, n_pts, n_pt_ids, bad_lvl = conn.execute(f"""--sql
+    n_poly, n_ids, n_pts, n_pt_ids, n_orphan, bad_lvl = conn.execute(f"""--sql
         SELECT (SELECT count(*) FROM '{poly}'),
                (SELECT count(DISTINCT adm{lvl}_id) FROM '{poly}'),
                (SELECT count(*) FROM '{pts}'),
                (SELECT count(DISTINCT id) FROM '{pts}'),
+               (SELECT count(*) FROM '{pts}' p
+                ANTI JOIN '{poly}' g ON p.id = g.adm{lvl}_id),
                (SELECT count(*) FROM {_read("lines")}
                 WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL})
     """).fetchall()[0]
-    if not n_poly == n_ids == n_pts == n_pt_ids or bad_lvl:
+    if not n_poly == n_ids == n_pts == n_pt_ids or n_orphan or bad_lvl:
         msg = (
             f"adm{lvl}: {n_poly} polygons, {n_ids} ids, {n_pts} points, "
-            f"{n_pt_ids} point ids, {bad_lvl} per-key lines with a null adm_lvl "
+            f"{n_pt_ids} point ids, {n_orphan} points with no polygon, "
+            f"{bad_lvl} per-key lines with a null adm_lvl "
             f"or one outside 1..{MAX_LVL}"
         )
         raise ValueError(msg)

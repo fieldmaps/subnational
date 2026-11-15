@@ -22,10 +22,11 @@ ISSUES_DIR = BUILD_DIR / "issues"
 STAGE_DIR = BUILD_DIR / "global"
 # Key of a per-key file: the name of its KEYS_DIR subfolder.
 _KEY = "parse_filename(parse_dirpath(filename, 'system'), false, 'system')"
-_ORDER = {
-    "points": "id",
-    "lines": "adm_lvl, a_id, b_id",
-}
+# Hilbert order over the world box, so each row group covers one area.
+_ORDER = (
+    "ST_Hilbert(geometry, "
+    "{'min_x': -180, 'min_y': -90, 'max_x': 180, 'max_y': 90}::BOX_2D)"
+)
 
 
 def merge() -> None:
@@ -52,14 +53,13 @@ def _write(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
         "points": f"{_read('points')} WHERE adm_lvl = {lvl}",
         "lines": f"{_read('lines')} WHERE adm_lvl <= {lvl}",
     }
-    ids = ", ".join(f"adm{n}_id" for n in range(1, lvl + 1))
     for geom, src in sources.items():
         cols = {r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
         drop = ", ".join(c for c in (MATCH_KEY, "overlay_fid") if c in cols)
         exclude = f" EXCLUDE ({drop})" if drop else ""
         dest = _staged(lvl, geom)
         conn.execute(
-            f"COPY (SELECT *{exclude} FROM {src} ORDER BY {_ORDER.get(geom, ids)}) "
+            f"COPY (SELECT *{exclude} FROM {src} ORDER BY {_ORDER}) "
             f"TO '{dest}' {PARQUET_OPTS}"
         )
     _check(conn, lvl)

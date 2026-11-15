@@ -1,4 +1,4 @@
-"""Sources stage: refresh cod-ab in catalog/iso3/ and publish changed collections."""
+"""Sources stage: refresh cod-ab in catalog/source/ and publish changed collections."""
 
 from .__main__ import main
 

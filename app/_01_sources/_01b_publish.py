@@ -1,4 +1,4 @@
-"""Register each catalog/iso3/{base} collection with portolan."""
+"""Register each catalog/source/{base} collection with portolan."""
 
 import json
 from logging import getLogger
@@ -11,14 +11,14 @@ from app._01_sources.schema import SOURCES_SQL
 from app._01_sources.utils import catalog_path
 from app.publish.config import (
     HOST,
-    ISO3_DESCRIPTION,
-    ISO3_TITLE,
+    SOURCE_DESCRIPTION,
+    SOURCE_TITLE,
     SRC_NAMES,
     SRC_NOTICES,
     TIERS,
 )
 from app.publish.utils import (
-    ISO3_DIR,
+    SOURCE_DIR,
     ensure_catalog,
     finalize,
     license_fields,
@@ -45,14 +45,14 @@ def publish() -> None:
     names = {base: _adm0_name(conn, group) for base, group in groups.items()}
     conn.close()
     iso3_changed = write_metadata(
-        ISO3_DIR,
-        title=ISO3_TITLE,
-        description=f"{ISO3_DESCRIPTION}\n\n{_sources_table(groups, names)}",
+        SOURCE_DIR,
+        title=SOURCE_TITLE,
+        description=f"{SOURCE_DESCRIPTION}\n\n{_sources_table(groups, names)}",
         **license_fields(None, None),
     )
     stale = stale_collections()
     added = [
-        f"iso3/{base}"
+        f"source/{base}"
         for base, group in sorted(groups.items())
         if _add(base, group, names[base] or base.upper(), stale)
     ]
@@ -112,7 +112,7 @@ def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
         }.values()
     )
     files = "; ".join(f"{r['key']}_{r['tier']}: {TIERS[r['tier']]}" for r in group)
-    folder = ISO3_DIR / base
+    folder = SOURCE_DIR / base
     names = " and ".join(SRC_NAMES[s] for s in srcs)
     notice = "".join(f" {SRC_NOTICES[s]}" for s in srcs if s in SRC_NOTICES)
     meta_changed = write_metadata(
@@ -127,7 +127,7 @@ def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
     if not (
         app.config.FORCE_PMTILES
         or meta_changed
-        or f"iso3/{base}" in stale
+        or f"source/{base}" in stale
         or not (folder / "versions.json").exists()
     ):
         return False
@@ -137,7 +137,7 @@ def _add(base: str, group: list[dict], title: str, stale: set[str]) -> bool:
     tile_collection(folder, force=app.config.FORCE_PMTILES)
     _reset_style(folder)
     # Without --force, add skips a changed metadata.yaml or sidecar JSON.
-    portolan("add", f"iso3/{base}", *when, "--force")
+    portolan("add", f"source/{base}", *when, "--force")
     return True
 
 
@@ -164,4 +164,4 @@ def _reset_style(folder: Path) -> None:
     style.unlink()
     for thumb in folder.glob("*.thumb.jpg"):
         if thumb.name != f"{first}.thumb.jpg":
-            portolan("rm", "-f", f"iso3/{folder.name}/{thumb.name}")
+            portolan("rm", "-f", f"source/{folder.name}/{thumb.name}")

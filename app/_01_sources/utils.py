@@ -61,9 +61,9 @@ def download(url: str, dest: Path) -> Path:
 
 
 def catalog_path(tier: str, key: str) -> Path:
-    """Return catalog/iso3/{base}/{key}_{tier}.parquet, creating its folder."""
+    """Return catalog/source/{base}/{key}_{tier}.parquet, creating its folder."""
     base = key.split("_", maxsplit=1)[0]
-    path = CATALOG_DIR / "iso3" / base / f"{key}_{tier}.parquet"
+    path = CATALOG_DIR / "source" / base / f"{key}_{tier}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -71,7 +71,7 @@ def catalog_path(tier: str, key: str) -> Path:
 def meta_path(key: str) -> Path:
     """Return the collection's {base}_metadata.json sidecar path."""
     base = key.split("_", maxsplit=1)[0]
-    return CATALOG_DIR / "iso3" / base / f"{base}_metadata.json"
+    return CATALOG_DIR / "source" / base / f"{base}_metadata.json"
 
 
 def published_src(key: str) -> str | None:

@@ -1,4 +1,4 @@
-"""Pull the catalog, refresh cod-ab in catalog/iso3/, and publish what changed."""
+"""Pull the catalog, refresh cod-ab in catalog/source/, and publish what changed."""
 
 from app.publish.utils import sync_catalog
 from app.utils import get_conn

@@ -1,4 +1,4 @@
-"""Ingest a EuroGeographics EuroRegionalMap (ERM) release into catalog/iso3/.
+"""Ingest a EuroGeographics EuroRegionalMap (ERM) release into catalog/source/.
 
 Run: uv run python -m scripts.ingest_erm ~/Downloads/FullEurope [--icc DE,FR]
 """
@@ -77,7 +77,7 @@ _STAMP = re.compile(r"<gmd:dateStamp>\s*<gco:Date>([^<]+)")
 
 
 def main() -> None:
-    """Rewrite catalog/iso3/{iso3}/ for every ERM country published from erm."""
+    """Rewrite catalog/source/{base}/ for every ERM country published from erm."""
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--icc", type=lambda v: set(v.split(",")), default=None)

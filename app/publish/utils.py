@@ -27,7 +27,7 @@ from .config import (
 
 logger = getLogger(__name__)
 
-ISO3_DIR = CATALOG_DIR / "iso3"
+SOURCE_DIR = CATALOG_DIR / "source"
 
 _CONFIG_YAML = f"""conversion:
   vector:

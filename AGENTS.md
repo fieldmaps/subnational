@@ -5,18 +5,18 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 ## Pipeline Stages
 
 ```text
-app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), refresh cod-ab collections in catalog/iso3/, then register changed collections with portolan (--push uploads)
+app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), refresh cod-ab collections in catalog/source/, then register changed collections with portolan (--push uploads)
 app/_02_build/       → per key in parallel: code the published extended layer (topo-tools code-create), edge-mosaic it to its world-view ADM0 parent with its own originals, package it; then merge into catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet (geom = polygons, points, lines; mirrors the international catalog's adm0-{geom} collections)
 app/_03_export/      → tile and register the catalog/global/ collections with portolan (--push uploads)
 app/publish/         → shared portolan helpers (tiling, metadata, add, readme/check, push) for sources and export
-scripts/ingest_erm.py → yearly EuroGeographics ERM release into the catalog/iso3/ collections published from erm (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
+scripts/ingest_erm.py → yearly EuroGeographics ERM release into the catalog/source/ collections published from erm (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
 ```
 
 Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step sources` (or `build`, `export`); also honors `STEP` env var.
 
 ## Catalog and Sources
 
-`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `iso3/{base}/` holds one source's layers per base iso3; `global/adm{n}-{geom}/` holds the export for levels 1 to 4. `adm{n}_polygons` carry every admin and metadata column for levels 0..n; `adm{n}_points` (`id, name..name3, pcode, adm_lvl`) and `adm{n}_lines` (`adm_lvl` 1..n, `a_`/`b_` id, names and pcode labelled at the line's own level) are lean and pair with the international ADM0 layers for country columns, coastlines and borders. Each `iso3/{base}/` collection has:
+`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `source/{base}/` holds one source's layers per base iso3; `global/adm{n}-{geom}/` holds the export for levels 1 to 4. `adm{n}_polygons` carry every admin and metadata column for levels 0..n; `adm{n}_points` (`id, name..name3, pcode, adm_lvl`) and `adm{n}_lines` (`adm_lvl` 1..n, `a_`/`b_` id, names and pcode labelled at the line's own level) are lean and pair with the international ADM0 layers for country columns, coastlines and borders. Each `source/{base}/` collection has:
 
 - `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; for cod-ab, `PARTS` (`app/config.py`) lists them and step 1 splits the original by part and extends each.
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.

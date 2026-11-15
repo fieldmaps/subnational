@@ -46,13 +46,13 @@ META_COLS = (
     ("via_checksum", "VARCHAR"),
 )
 _ROW = "STRUCT(" + ", ".join(f'"{c}" {t}' for c, t in META_COLS) + ")"
-# One row per published (key, tier), read from every catalog/iso3 sidecar.
+# One row per published (key, tier), read from every catalog/source sidecar.
 SOURCES_SQL = f"""
     SELECT *, split_part(key, '_', 1) AS base
     FROM (
         SELECT unnest(rows, recursive := true)
         FROM read_json(
-            '{CATALOG_DIR}/iso3/*/*_metadata.json',
+            '{CATALOG_DIR}/source/*/*_metadata.json',
             columns = {{'rows': '{_ROW}[]'}}
         )
     )

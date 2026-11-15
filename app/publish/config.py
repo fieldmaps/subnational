@@ -18,11 +18,11 @@ CATALOG_DESCRIPTION = (
     "always in the humanitarian world view, which groups disputed and autonomous "
     "areas with a neighbouring area. Built from one layer per iso3 (OCHA COD-AB "
     "on Source Cooperative, filled with EuroRegionalMap, legacy COD and "
-    "geoBoundaries layers), published under iso3/, and clipped to the OSM-based "
+    "geoBoundaries layers), published under source/, and clipped to the OSM-based "
     f"humanitarian admin 0 polygons of {INTERNATIONAL_URL}."
 )
-ISO3_TITLE = "Subnational boundaries by ISO3"
-ISO3_DESCRIPTION = (
+SOURCE_TITLE = "Source layers by ISO3"
+SOURCE_DESCRIPTION = (
     "One collection per ISO3 country or area: the layer the global build uses, "
     "taken from OCHA COD-AB where available, else EuroRegionalMap, legacy COD, "
     "or geoBoundaries."

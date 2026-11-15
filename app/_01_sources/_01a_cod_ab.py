@@ -28,7 +28,7 @@ _LANGS = ("src_lang", "src_lang1", "src_lang2")
 
 
 def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
-    """Write catalog/iso3/{iso3}/ from cod-ab when its metadata or data changed."""
+    """Write catalog/source/{base}/ from cod-ab when its metadata or data changed."""
     catalog = get_json(f"{COD_AB_DATA}/extended/catalog.json")
     iso3s = sorted(
         link["href"].split("/")[1]
@@ -77,7 +77,7 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
         src = published_src(key)
         if src not in (None, SRC):
             logger.info("%s: replacing %s with %s", key, src, SRC)
-            portolan("rm", "-f", f"iso3/{key}")
+            portolan("rm", "-f", f"source/{key}")
         _drop_stale(key, rows)
         paths = {t: _fetch(c, f"{t}/{layer}", t) for t, c in colls.items()}
         original = (
@@ -125,7 +125,7 @@ def _drop_stale(key: str, rows: dict[tuple[str, str], dict]) -> None:
             continue
         stem = catalog_path(r["tier"], r["key"]).with_suffix("")
         for f in stem.parent.glob(f"{stem.name}.*"):
-            portolan("rm", "-f", f"iso3/{key}/{f.name}")
+            portolan("rm", "-f", f"source/{key}/{f.name}")
     keep = [r for r in have if (r["tier"], r["key"]) in rows]
     path.write_text(json.dumps({"rows": keep}, indent=2) + "\n")
 

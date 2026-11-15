@@ -19,6 +19,8 @@ from app.utils import get_conn, global_path
 
 from .config import GLOBAL_LICENSE
 
+# FieldMaps produces the edge-matched global layers from the per-iso3 sources.
+_PRODUCER = {**HOST, "roles": ["producer", *HOST["roles"]]}
 _VIEW = (
     "Humanitarian world view, which groups disputed and autonomous areas with a "
     "neighbouring area, clipped to the OSM-based admin 0 polygons of "
@@ -54,7 +56,7 @@ def main() -> None:
         title="Global edge-matched layers",
         description=_VIEW,
         **license_fields(GLOBAL_LICENSE, None),
-        providers=[HOST],
+        providers=[_PRODUCER],
         processing_notes=notes,
     )
     when = ["--datetime", str(stamp)[:10]] if stamp else []
@@ -66,7 +68,7 @@ def main() -> None:
             title=f"ADM{lvl} {geom} (humanitarian view, ODbL)",
             description=f"{_DESCRIPTIONS[geom].format(n=lvl)} {_VIEW}",
             **license_fields(GLOBAL_LICENSE, None),
-            providers=[HOST],
+            providers=[_PRODUCER],
             processing_notes=notes,
         )
         tile_collection(CATALOG_DIR / folder, force=app.config.FORCE_PMTILES)

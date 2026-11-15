@@ -5,7 +5,6 @@ from itertools import product
 
 import app.config
 from app._01_sources.schema import SOURCES_SQL
-from app._02_build._02a_inputs import PARENT
 from app.config import CATALOG_DIR, GEOMS, MAX_LVL
 from app.publish.config import HOST, INTERNATIONAL_URL
 from app.publish.utils import (
@@ -16,7 +15,7 @@ from app.publish.utils import (
     tile_collection,
     write_metadata,
 )
-from app.utils import get_conn
+from app.utils import get_conn, global_path
 
 from .config import GLOBAL_LICENSE
 
@@ -43,7 +42,8 @@ def main() -> None:
     """Write metadata.yaml per global collection, add, check, and push with --push."""
     ensure_catalog()
     conn = get_conn()
-    stamp = conn.execute(f"SELECT max(wld_date) FROM '{PARENT}'").fetchall()[0][0]
+    adm1 = global_path(1, "polygons")
+    stamp = conn.execute(f"SELECT max(wld_date) FROM '{adm1}'").fetchall()[0][0]
     conn.close()
     notes = _source_notes()
     write_metadata(

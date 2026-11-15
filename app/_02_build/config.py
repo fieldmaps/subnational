@@ -11,7 +11,7 @@ NAME_FIELD = "adm{n}_name"
 CODE_FIELD = "adm{n}_id"
 # Input/overlay match column; upper-cased key so multi-extent keys (GEO_1) match.
 MATCH_KEY = "match_key"
-# Input column <- adm0_bounds column on ADM0 parts that no input covers.
+# Input column <- parent.parquet column on ADM0 parts that no input covers.
 ADM0_FILL = {
     "adm0_id": "adm0_id",
     "adm0_pcode": "adm0_src",
@@ -21,7 +21,7 @@ ADM0_FILL = {
     "iso2": "iso_2",
     "iso3": "iso_3",
 }
-# World-view columns from adm0_wld that edge_mosaic copies onto every polygon.
+# World-view columns of parent.parquet that edge_mosaic copies onto every polygon.
 WLD_COLS = (
     "iso_cd",
     "iso_2",

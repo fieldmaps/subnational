@@ -41,8 +41,11 @@ _DESCRIPTIONS = {
 def main() -> None:
     """Write metadata.yaml per global collection, add, check, and push with --push."""
     ensure_catalog()
-    conn = get_conn()
     adm1 = global_path(1, "polygons")
+    if not adm1.exists():
+        msg = f"{adm1} is missing: run the build step first"
+        raise FileNotFoundError(msg)
+    conn = get_conn()
     stamp = conn.execute(f"SELECT max(wld_date) FROM '{adm1}'").fetchall()[0][0]
     conn.close()
     notes = _source_notes()

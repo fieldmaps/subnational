@@ -38,7 +38,9 @@ def merge() -> None:
             _write(conn, lvl)
         _merge_issues(conn)
     for lvl, geom in product(range(1, MAX_LVL + 1), GEOMS):
-        move(_staged(lvl, geom), global_path(lvl, geom))
+        dest = global_path(lvl, geom)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        move(_staged(lvl, geom), dest)
     STAGE_DIR.rmdir()
     rmtree(KEYS_DIR)
 

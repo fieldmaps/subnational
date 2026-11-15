@@ -50,10 +50,8 @@ def get_conn(
 
 
 def global_path(lvl: int, geom: str) -> Path:
-    """Return catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet (folder created)."""
-    folder = CATALOG_DIR / "global" / f"adm{lvl}-{geom}"
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder / f"adm{lvl}_{geom}.parquet"
+    """Return catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet."""
+    return CATALOG_DIR / "global" / f"adm{lvl}-{geom}" / f"adm{lvl}_{geom}.parquet"
 
 
 _PROCESS = psutil.Process()

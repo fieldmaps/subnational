@@ -1,24 +1,11 @@
 """Configuration constants for the build stage."""
 
-from app.config import PKG_DIR
+from app.config import TMP_DIR
 
-ADM0_BASE = "https://data.source.coop/fieldmaps/international"
-ADM0_LOCAL = PKG_DIR.parent.parent / "international" / "catalog"
-ADM0_HUMANITARIAN = "odbl/humanitarian/adm0-polygons/adm0_polygons.parquet"
-ADM0_DISAGGREGATED = "odbl/disaggregated/adm0-polygons/adm0_polygons.parquet"
-
-# Disaggregated adm0_src -> clip part replacing its humanitarian parent (prefix).
-CLIP_PARTS = {
-    "SRB_1": "SRB_1",
-    "SRB_2": "SRB_2",
-    "XKX": "SRB_3",
-    "GEO_1": "GEO_1",
-    "GEO_2": "GEO_2",
-    "GEO_3": "GEO_3",
-    "XJK": "XJK_1",
-    "XAK": "XJK_2",
-    "XSS": "XJK_3",
-}
+BUILD_DIR = TMP_DIR / "build"
+# Parallel per-key jobs x topo-tools threads each: about half the cores.
+WORKERS = 2
+THREADS = 2
 
 NAME_FIELD = "adm{n}_name"
 CODE_FIELD = "adm{n}_id"

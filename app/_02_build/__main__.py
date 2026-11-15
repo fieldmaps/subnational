@@ -1,20 +1,14 @@
-"""Build edge-matched adm{n}_{polygons,lines,points} tables in tmp/build.duckdb."""
+"""Build catalog/global/adm{n}-{geom}/ from the published extended layers."""
 
-import app.config
-from app.config import BUILD_DB
-from app.utils import export_debug_tables, get_conn
-
-from . import _02a_inputs, _02b_clip
+from . import _02a_inputs, _02b_keys, _02c_merge
 
 
 def main() -> None:
-    """Run the global build stage end-to-end."""
-    conn = get_conn(BUILD_DB, reset=True)
-    _02a_inputs.load_adm0(conn)
-    _02b_clip.clip_and_package(conn)
-    if app.config.DEBUG:
-        export_debug_tables(conn, "build")
-    conn.close()
+    """Write the ADM0 parent, package every key in parallel, then merge."""
+    sources = _02a_inputs.sources()
+    _02a_inputs.write_parent(list(sources))
+    _02b_keys.build_keys(sources)
+    _02c_merge.merge()
 
 
 if __name__ == "__main__":

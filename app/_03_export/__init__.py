@@ -1,4 +1,4 @@
-"""Export stage: write and publish the catalog/global/ collections."""
+"""Export stage: register the catalog/global/ collections with portolan."""
 
 from .__main__ import main
 

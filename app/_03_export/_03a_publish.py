@@ -1,10 +1,12 @@
 """Register catalog/global/ collections with portolan."""
 
 from collections import Counter
+from itertools import product
 
 import app.config
 from app._01_sources.schema import SOURCES_SQL
-from app.config import BUILD_DB, CATALOG_DIR
+from app._02_build._02a_inputs import PARENT
+from app.config import CATALOG_DIR, GEOMS, MAX_LVL
 from app.publish.config import HOST, INTERNATIONAL_URL
 from app.publish.utils import (
     ensure_catalog,
@@ -17,29 +19,31 @@ from app.publish.utils import (
 from app.utils import get_conn
 
 from .config import GLOBAL_LICENSE
-from .utils import build_levels
 
 _VIEW = (
     "Humanitarian world view, which groups disputed and autonomous areas with a "
     "neighbouring area, clipped to the OSM-based admin 0 polygons of "
     f"{INTERNATIONAL_URL}."
 )
-_FILES = (
-    "admin{n}.parquet: polygons, dissolved from the finest source level; "
-    "admin{n}_points.parquet: one label point per polygon with its id, names "
-    "and pcode; admin{n}_lines.parquet: boundary lines for levels 1 to {n}, each "
-    "side labelled with the units at the line's adm_lvl. Points and lines carry "
-    "no country-level columns, coastlines or international borders: use the admin "
-    f"0 polygons, points and lines of {INTERNATIONAL_URL} for those."
+_ADM0 = (
+    "Carries no country-level columns, coastlines or international borders: use "
+    f"the admin 0 polygons, points and lines of {INTERNATIONAL_URL} for those."
 )
+_DESCRIPTIONS = {
+    "polygons": "Admin level {n} areas, dissolved from the finest source level, "
+    "with every admin column for levels 0 to {n} and source metadata.",
+    "points": "One label point per admin level {n} area, with its id, names and "
+    f"pcode. {_ADM0}",
+    "lines": "Boundary lines for admin levels 1 to {n}, each side labelled with "
+    f"the units at the line's adm_lvl. {_ADM0}",
+}
 
 
 def main() -> None:
     """Write metadata.yaml per global collection, add, check, and push with --push."""
     ensure_catalog()
-    conn = get_conn(BUILD_DB, read_only=True)
-    levels = build_levels(conn)
-    stamp = conn.execute("SELECT max(wld_date) FROM adm0_wld").fetchall()[0][0]
+    conn = get_conn()
+    stamp = conn.execute(f"SELECT max(wld_date) FROM '{PARENT}'").fetchall()[0][0]
     conn.close()
     notes = _source_notes()
     write_metadata(
@@ -52,12 +56,12 @@ def main() -> None:
     )
     when = ["--datetime", str(stamp)[:10]] if stamp else []
     force = ["--force"] if app.config.FORCE_PMTILES else []
-    for lvl in levels:
-        folder = f"global/admin{lvl}"
+    for lvl, geom in product(range(1, MAX_LVL + 1), GEOMS):
+        folder = f"global/adm{lvl}-{geom}"
         write_metadata(
             CATALOG_DIR / folder,
-            title=f"Admin {lvl}",
-            description=f"Admin level {lvl}. {_FILES.format(n=lvl)} {_VIEW}",
+            title=f"ADM{lvl} {geom} (humanitarian view, ODbL)",
+            description=f"{_DESCRIPTIONS[geom].format(n=lvl)} {_VIEW}",
             **license_fields(GLOBAL_LICENSE, None),
             providers=[HOST],
             processing_notes=notes,

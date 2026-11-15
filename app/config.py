@@ -19,7 +19,6 @@ PKG_DIR = Path(__file__).parent
 TMP_DIR = PKG_DIR.parent / "tmp"
 
 CATALOG_DIR = PKG_DIR.parent / "catalog"
-BUILD_DB = TMP_DIR / "build.duckdb"
 
 # iso3s whose published layer cod-ab must not replace (deeper, matches Mapbox).
 KEEP = {"mda", "pol", "svk"}

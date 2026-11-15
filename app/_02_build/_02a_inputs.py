@@ -1,103 +1,135 @@
-"""Stage the published per-iso3 inputs and build the ADM0 clip boundary."""
+"""Write the per-key ADM0 parent rows and stage each published extended layer."""
 
 import re
+from contextlib import closing
+from pathlib import Path
 
 import duckdb
 from topo_tools.api import code_create
 
-from app._01_sources.schema import SOURCES_SQL, columns
+from app._01_sources.schema import LATIN, META_COLS, SOURCES_SQL, columns
 from app._01_sources.utils import catalog_path
-from app.config import MAX_LVL, PARQUET_OPTS, TMP_DIR
+from app.adm0 import ADM0_HUMANITARIAN, adm0_clip_sql, adm0_path
+from app.config import MAX_LVL, PARQUET_OPTS
+from app.utils import get_conn
 
-from .config import (
-    ADM0_BASE,
-    ADM0_DISAGGREGATED,
-    ADM0_FILL,
-    ADM0_HUMANITARIAN,
-    ADM0_LOCAL,
-    CLIP_PARTS,
-    CODE_FIELD,
-    MATCH_KEY,
-    NAME_FIELD,
-    WLD_COLS,
-)
+from .config import ADM0_FILL, BUILD_DIR, CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
 
-STAGE_DIR = TMP_DIR / "build" / "inputs"
-_LATIN = r"[\p{Latin}\p{Common}\p{Inherited}]+"
-_META = (
-    "src_lvl",
-    "src_lang",
-    "src_lang1",
-    "src_lang2",
-    "src_date",
-    "src_update",
-    "src_name",
-    "src_name1",
-    "src_lic",
-    "src_url",
-    "src_grp",
-)
+PARENT = BUILD_DIR / "parent.parquet"
+_META = tuple((c, t) for c, t in META_COLS if c.startswith("src_"))
 
 
-def input_paths(tier: str) -> list[str]:
-    """Return the published {tier} parquet paths, sorted by key."""
-    return [str(catalog_path(tier, key)) for key in _keys(tier)]
+def sources() -> dict[str, tuple]:
+    """Return each published extended key's src_* sidecar values, by key."""
+    names = ", ".join(c for c, _ in _META)
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT key, {names} FROM ({SOURCES_SQL}) "
+            "WHERE tier = 'extended' ORDER BY key"
+        ).fetchall()
+    return {key: tuple(meta) for key, *meta in rows}
 
 
-def stage_extended(conn: duckdb.DuckDBPyConnection) -> list[str]:
-    """Add fieldmaps adm{n}_id codes and src_* metadata to each published layer.
+def staged_columns() -> list[tuple[str, str]]:
+    """Return every staged (column, type), with code_create's adm{n}_id columns."""
+    cols = [
+        (c, t)
+        for name, t in columns(MAX_LVL)
+        for c in ((f"{name[:4]}_id", name) if _is_id_slot(name) else (name,))
+    ]
+    cols.insert(cols.index(("adm0_pcode", "VARCHAR")), ("adm0_id", "VARCHAR"))
+    return [(MATCH_KEY, "VARCHAR"), *cols, *_META]
 
-    MATCH_KEY is the upper-cased key so multi-extent keys (e.g. GEO_1) match.
+
+def write_parent(keys: list[str]) -> None:
+    """Write PARENT: the clip ADM0 merged per match key, with world-view columns.
+
+    A part keeps its own key when an input has it, else merges under its iso_3.
+    Fill columns come from the part's own row: unmatched keys are single parts.
     """
-    STAGE_DIR.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for key in _keys("extended"):
-        row = conn.execute(
-            f"SELECT {', '.join(_META)} FROM ({SOURCES_SQL}) "
-            "WHERE tier = 'extended' AND key = ?",
-            [key],
-        ).fetchall()[0]
-        meta = dict(zip(_META, row, strict=True))
-        path = catalog_path("extended", key)
-        stamp = (
-            conn.execute(
-                f"SELECT max(CAST(valid_on AS DATE)) FROM read_parquet('{path}')"
-            ).fetchall()[0][0]
-            or meta["src_date"]
-        )
-        root = key.upper() if stamp is None else f"{key.upper()}-{stamp:%Y%m%d}"
-        have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{path}'").fetchall()}
-        cols = [
-            _col(c, t, have)
-            for name, t in columns(MAX_LVL)
-            for c in ((f"{name[:4]}_id", name) if _is_id_slot(name) else (name,))
-            if _src(c) in have
-        ]
-        seed = STAGE_DIR / f"{key}_seed.parquet"
+    wld = ", ".join(f"w.{c}" for c in WLD_COLS)
+    part = [c for c in ADM0_FILL.values() if c not in WLD_COLS]
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    with closing(get_conn()) as conn:
         conn.execute(
             f"""--sql
             COPY (
-                SELECT ? AS {MATCH_KEY}, {", ".join(cols)},
-                       {", ".join(f"?::{_type(c)} AS {c}" for c in _META)}
-                FROM read_parquet('{path}')
-            ) TO '{seed}' {PARQUET_OPTS}
+                WITH clip AS ({adm0_clip_sql()}), wld AS (
+                    SELECT * EXCLUDE (geometry)
+                    FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
+                    QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
+                ), keyed AS (
+                    SELECT CASE WHEN list_contains($keys, adm0_src) THEN adm0_src
+                                WHEN list_contains($keys, iso_3) THEN iso_3
+                                ELSE adm0_src END AS {MATCH_KEY},
+                           iso_3, {", ".join(part)}, geometry
+                    FROM clip
+                ), merged AS (
+                    SELECT {MATCH_KEY}, arg_min(iso_3, adm0_id) AS iso_3,
+                           {", ".join(f"arg_min({c}, adm0_id) AS {c}" for c in part)},
+                           ST_Union_Agg(geometry)::GEOMETRY AS geom
+                    FROM keyed
+                    GROUP BY {MATCH_KEY}
+                )
+                SELECT k.{MATCH_KEY}, {wld}, {", ".join(f"k.{c}" for c in part)}, k.geom
+                FROM merged k
+                LEFT JOIN wld w ON k.iso_3 = w.iso_3
+                ORDER BY k.{MATCH_KEY}
+            ) TO '{PARENT}' {PARQUET_OPTS}
         """,
-            [key.upper(), *row],
+            {"keys": [k.upper() for k in keys]},
         )
-        dest = STAGE_DIR / f"{key}.parquet"
-        code_create(
-            seed,
-            dest,
-            STAGE_DIR / f"{key}_issues.parquet",
-            root_code=root,
-            delimiter="-",
-            min_width="auto",
-            name_field=NAME_FIELD,
-            code_field=CODE_FIELD,
-        )
-        seed.unlink()
-        paths.append(str(dest))
-    return paths
+
+
+def stage(conn: duckdb.DuckDBPyConnection, key: str, meta: tuple, dest: Path) -> None:
+    """Write key's layer with adm{n}_id codes, src_* metadata and every level's columns.
+
+    Levels past the source's depth stay null so schema_fill copies the deepest down.
+    """
+    path = catalog_path("extended", key)
+    src_date = meta[[c for c, _ in _META].index("src_date")]
+    stamp = (
+        conn.execute(
+            f"SELECT max(CAST(valid_on AS DATE)) FROM read_parquet('{path}')"
+        ).fetchall()[0][0]
+        or src_date
+    )
+    root = key.upper() if stamp is None else f"{key.upper()}-{stamp:%Y%m%d}"
+    have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{path}'").fetchall()}
+    cols = [
+        _col(c, t, have)
+        for c, t in staged_columns()
+        if c not in (MATCH_KEY, "adm0_id", *dict(_META)) and _src(c) in have
+    ]
+    seed = dest.with_name(f"{key}_seed.parquet")
+    conn.execute(
+        f"""--sql
+        COPY (
+            SELECT ? AS {MATCH_KEY}, {", ".join(cols)},
+                   {", ".join(f"?::{t} AS {c}" for c, t in _META)}
+            FROM read_parquet('{path}')
+        ) TO '{seed}' {PARQUET_OPTS}
+    """,
+        [key.upper(), *meta],
+    )
+    coded = dest.with_name(f"{key}_coded.parquet")
+    code_create(
+        seed,
+        coded,
+        dest.with_name("code_issues.parquet"),
+        root_code=root,
+        delimiter="-",
+        min_width="auto",
+        name_field=NAME_FIELD,
+        code_field=CODE_FIELD,
+    )
+    seed.unlink()
+    got = {r[0] for r in conn.execute(f"DESCRIBE FROM '{coded}'").fetchall()}
+    padded = ", ".join(
+        f'"{c}"' if c in got else f'NULL::{t} AS "{c}"' for c, t in staged_columns()
+    )
+    conn.execute(f"COPY (SELECT {padded} FROM '{coded}') TO '{dest}' {PARQUET_OPTS}")
+    coded.unlink()
 
 
 def _is_id_slot(name: str) -> bool:
@@ -116,84 +148,8 @@ def _col(col: str, typ: str, have: set[str]) -> str:
     if re.fullmatch(r"adm\d_name", col):
         alts = [f"{col}{i}" for i in (1, 2, 3) if f"{col}{i}" in have]
         latin = (
-            f"""CASE WHEN regexp_full_match("{a}", '{_LATIN}') THEN "{a}" END"""
+            f"""CASE WHEN regexp_full_match("{a}", '{LATIN}') THEN "{a}" END"""
             for a in alts
         )
         value = f"coalesce({', '.join((value, *latin))})"
     return f'CAST({value} AS {typ}) AS "{col}"'
-
-
-def _type(col: str) -> str:
-    return {"src_lvl": "INTEGER", "src_date": "DATE", "src_update": "DATE"}.get(
-        col, "VARCHAR"
-    )
-
-
-def _keys(tier: str) -> list[str]:
-    """Return the published keys of one tier, sorted."""
-    with duckdb.connect() as conn:
-        rows = conn.execute(
-            f"SELECT key FROM ({SOURCES_SQL}) WHERE tier = ? ORDER BY key", [tier]
-        ).fetchall()
-    return [key for (key,) in rows]
-
-
-def load_adm0(conn: duckdb.DuckDBPyConnection) -> None:
-    """Build adm0_clip, adm0_wld (one row per iso_3), and adm0_bounds (per match key).
-
-    adm0_bounds carries the parent's world-view columns that edge_mosaic copies over.
-    """
-    conn.execute(f"CREATE OR REPLACE TABLE adm0_clip AS {adm0_clip_sql()}")
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE adm0_wld AS
-        SELECT * EXCLUDE (geometry) FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
-        QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
-    """)
-    wld = ", ".join(f"w.{c}" for c in WLD_COLS)
-    part = [c for c in ADM0_FILL.values() if c not in WLD_COLS]
-    keys = [k.upper() for k in _keys("extended")]
-    # A part keeps its own key when an input has it, else merges under its iso_3.
-    # Fill columns come from the part's own row: unmatched keys are single parts.
-    conn.execute(
-        f"""--sql
-        CREATE OR REPLACE TABLE adm0_bounds AS
-        WITH keyed AS (
-            SELECT CASE WHEN list_contains($keys, adm0_src) THEN adm0_src
-                        WHEN list_contains($keys, iso_3) THEN iso_3
-                        ELSE adm0_src END AS {MATCH_KEY},
-                   iso_3, {", ".join(part)}, geometry
-            FROM adm0_clip
-        ), merged AS (
-            SELECT {MATCH_KEY}, arg_min(iso_3, adm0_id) AS iso_3,
-                   {", ".join(f"arg_min({c}, adm0_id) AS {c}" for c in part)},
-                   ST_Union_Agg(geometry)::GEOMETRY AS geom
-            FROM keyed
-            GROUP BY {MATCH_KEY}
-        )
-        SELECT k.{MATCH_KEY}, {wld}, {", ".join(f"k.{c}" for c in part)}, k.geom
-        FROM merged k
-        LEFT JOIN adm0_wld w ON k.iso_3 = w.iso_3
-        ORDER BY k.{MATCH_KEY}
-    """,
-        {"keys": keys},
-    )
-
-
-def adm0_clip_sql() -> str:
-    """Return the humanitarian ADM0 with each CLIP_PARTS parent split into parts."""
-    parts = ", ".join(f"('{s}', '{d}')" for s, d in CLIP_PARTS.items())
-    return f"""--sql
-        WITH p(src, dst) AS (VALUES {parts})
-        SELECT * FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
-        WHERE adm0_src NOT IN (SELECT split_part(dst, '_', 1) FROM p)
-        UNION ALL BY NAME
-        SELECT d.* REPLACE (p.dst AS adm0_src, split_part(p.dst, '_', 1) AS iso_3)
-        FROM read_parquet('{adm0_path(ADM0_DISAGGREGATED)}') d
-        JOIN p ON d.adm0_src = p.src
-    """
-
-
-def adm0_path(rel: str) -> str:
-    """Return the local international catalog file if present, else its URL."""
-    local = ADM0_LOCAL / rel
-    return str(local) if local.exists() else f"{ADM0_BASE}/{rel}"

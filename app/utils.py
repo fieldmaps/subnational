@@ -1,4 +1,4 @@
-"""Shared debug utilities: profiled DuckDB connection and parquet snapshots."""
+"""Shared DuckDB connection, profiled per query when DEBUG is set."""
 
 import contextlib
 import re
@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import cast
 
 import duckdb
-import pandas as pd
 import psutil
 from duckdb import DuckDBPyConnection
 
 import app.config
+from app.config import CATALOG_DIR
 
 logger = getLogger(__name__)
 
@@ -48,19 +48,21 @@ def get_conn(
     return conn
 
 
+def global_path(lvl: int, geom: str) -> Path:
+    """Return catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet (folder created)."""
+    folder = CATALOG_DIR / "global" / f"adm{lvl}-{geom}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"adm{lvl}_{geom}.parquet"
+
+
 _PROCESS = psutil.Process()
 _MEM_Q = "SELECT COALESCE(SUM(memory_usage_bytes), 0) FROM duckdb_memory()"
-_GEO_PARQUET = (
-    "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION 'V2')"
-)
-_PLAIN_PARQUET = "(FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL 15)"
 
 
 class ProfiledConnection:
     """Proxy around DuckDBPyConnection; logs RSS peak and DuckDB delta per execute().
 
     RSS peak captures GEOS working memory that duckdb_memory() misses.
-    Only active when app.config.DEBUG is True.
     """
 
     def __init__(self, conn: DuckDBPyConnection) -> None:  # noqa: D107
@@ -68,12 +70,6 @@ class ProfiledConnection:
 
     def execute(self, query: str, parameters: list | None = None):  # noqa: ANN201
         """Log wall-clock time, RSS peak, and DuckDB delta/total, then forward."""
-        if not app.config.DEBUG:
-            return (
-                self._conn.execute(query, parameters)
-                if parameters is not None
-                else self._conn.execute(query)
-            )
         t0 = time.perf_counter()
         before_rss = _PROCESS.memory_info().rss
         before_ddb = self._conn.execute(_MEM_Q).fetchall()[0][0]
@@ -126,46 +122,10 @@ class _EagerResult:
 
     def __init__(self, rows: list, description: list | None = None) -> None:
         self._rows = rows
-        self._description = description
-        self._idx = 0
+        self.description = description
 
     def fetchall(self) -> list:
         return self._rows
-
-    def fetchone(self) -> tuple | None:
-        if self._idx < len(self._rows):
-            row = self._rows[self._idx]
-            self._idx += 1
-            return row
-        return None
-
-    def df(self) -> pd.DataFrame:
-        cols = [d[0] for d in self._description] if self._description else None
-        return pd.DataFrame(self._rows, columns=cols)
-
-
-def export_debug_tables(
-    conn: DuckDBPyConnection,
-    subdir: str,
-    only: set[str] | None = None,
-) -> None:
-    """Export all pipeline tables to tmp/<subdir>/*.parquet for post-run inspection."""
-    out_dir = app.config.TMP_DIR / subdir
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tables = conn.execute(
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = 'main' ORDER BY table_name",
-    ).fetchall()
-    for (table,) in tables:
-        if only is not None and table not in only:
-            continue
-        out = str(out_dir / f"{table}.parquet")
-        has_geom = conn.execute(
-            "SELECT COUNT(*) > 0 FROM information_schema.columns "
-            f"WHERE table_name = '{table}' AND data_type = 'GEOMETRY'",
-        ).fetchall()[0][0]
-        opts = _GEO_PARQUET if has_geom else _PLAIN_PARQUET
-        conn.execute(f"COPY \"{table}\" TO '{out}' {opts}")
 
 
 def _query_label(query: str) -> str:

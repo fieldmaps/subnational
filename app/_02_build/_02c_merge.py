@@ -36,9 +36,9 @@ def merge() -> None:
 def _write(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     """Write and check one level's three layers."""
     sources = {
-        "polygons": f"read_parquet('{KEYS_DIR}/*/admin{lvl}.parquet')",
-        "points": f"read_parquet('{KEYS_DIR}/*/points.parquet') WHERE adm_lvl = {lvl}",
-        "lines": f"read_parquet('{KEYS_DIR}/*/lines.parquet') WHERE adm_lvl <= {lvl}",
+        "polygons": _read(f"admin{lvl}"),
+        "points": f"{_read('points')} WHERE adm_lvl = {lvl}",
+        "lines": f"{_read('lines')} WHERE adm_lvl <= {lvl}",
     }
     ids = ", ".join(f"adm{n}_id" for n in range(1, lvl + 1))
     for geom, src in sources.items():
@@ -51,6 +51,11 @@ def _write(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
             f"TO '{dest}' {PARQUET_OPTS}"
         )
     _check(conn, lvl)
+
+
+def _read(name: str) -> str:
+    """Return a read of every key's {name}.parquet, columns matched by name."""
+    return f"read_parquet('{KEYS_DIR}/*/{name}.parquet', union_by_name = true)"
 
 
 def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:

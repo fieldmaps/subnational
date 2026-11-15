@@ -33,6 +33,7 @@ def merge() -> None:
     rmtree(STAGE_DIR, ignore_errors=True)
     STAGE_DIR.mkdir(parents=True)
     with closing(get_conn()) as conn:
+        _check_lines(conn)
         for lvl in range(1, MAX_LVL + 1):
             _write(conn, lvl)
         _merge_issues(conn)
@@ -84,25 +85,32 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     if missing := want - have:
         msg = f"adm{lvl}_polygons is missing {sorted(missing)}"
         raise ValueError(msg)
-    n_poly, n_ids, n_pts, n_pt_ids, n_orphan, bad_lvl = conn.execute(f"""--sql
+    n_poly, n_ids, n_pts, n_pt_ids, n_orphan = conn.execute(f"""--sql
         SELECT (SELECT count(*) FROM '{poly}'),
                (SELECT count(DISTINCT adm{lvl}_id) FROM '{poly}'),
                (SELECT count(*) FROM '{pts}'),
                (SELECT count(DISTINCT id) FROM '{pts}'),
                (SELECT count(*) FROM '{pts}' p
-                ANTI JOIN '{poly}' g ON p.id = g.adm{lvl}_id),
-               (SELECT count(*) FROM {_read("lines")}
-                WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL})
+                ANTI JOIN '{poly}' g ON p.id = g.adm{lvl}_id)
     """).fetchall()[0]
-    if not 0 < n_poly == n_ids == n_pts == n_pt_ids or n_orphan or bad_lvl:
+    if not 0 < n_poly == n_ids == n_pts == n_pt_ids or n_orphan:
         msg = (
             f"adm{lvl}: {n_poly} polygons, {n_ids} ids, {n_pts} points, "
-            f"{n_pt_ids} point ids, {n_orphan} points with no polygon, "
-            f"{bad_lvl} per-key lines with a null adm_lvl "
-            f"or one outside 1..{MAX_LVL}"
+            f"{n_pt_ids} point ids, {n_orphan} points with no polygon"
         )
         raise ValueError(msg)
     logger.info("adm%d: %d polygons and points", lvl, n_poly)
+
+
+def _check_lines(conn: duckdb.DuckDBPyConnection) -> None:
+    """Raise if any key's lines have a null adm_lvl or one outside 1..MAX_LVL."""
+    bad = conn.execute(f"""--sql
+        SELECT count(*) FROM {_read("lines")}
+        WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL}
+    """).fetchall()[0][0]
+    if bad:
+        msg = f"{bad} per-key lines with a null adm_lvl or one outside 1..{MAX_LVL}"
+        raise ValueError(msg)
 
 
 def _merge_issues(conn: duckdb.DuckDBPyConnection) -> None:

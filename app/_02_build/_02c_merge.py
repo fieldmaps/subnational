@@ -94,7 +94,7 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
                (SELECT count(*) FROM {_read("lines")}
                 WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL})
     """).fetchall()[0]
-    if not n_poly == n_ids == n_pts == n_pt_ids or n_orphan or bad_lvl:
+    if not 0 < n_poly == n_ids == n_pts == n_pt_ids or n_orphan or bad_lvl:
         msg = (
             f"adm{lvl}: {n_poly} polygons, {n_ids} ids, {n_pts} points, "
             f"{n_pt_ids} point ids, {n_orphan} points with no polygon, "

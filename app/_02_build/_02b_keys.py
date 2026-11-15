@@ -3,7 +3,7 @@
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import closing
-from logging import getLogger
+from logging import WARNING, Handler, LogRecord, getLogger
 from pathlib import Path
 from shutil import rmtree
 
@@ -30,6 +30,17 @@ logger = getLogger(__name__)
 KEYS_DIR = BUILD_DIR / "keys"
 # Job name for the ADM0 parts that no input covers.
 FILL_JOB = "_fill"
+
+
+class _Unpaired(Handler):
+    """Record topo-tools' warning that an input ran without its originals."""
+
+    def __init__(self) -> None:
+        super().__init__(WARNING)
+        self.hit = False
+
+    def emit(self, record: LogRecord) -> None:
+        self.hit |= "runs without originals" in record.getMessage()
 
 
 def build_keys(sources: dict[str, tuple]) -> None:
@@ -64,13 +75,16 @@ def _input_job(key: str, meta: tuple) -> float:
             [key.upper()],
         )
         stage(conn, key, meta, staged)
-    base = catalog_path("original", key).parent
+    originals = sorted(catalog_path("original", key).parent.glob("*_original.parquet"))
+    unpaired = _Unpaired()
+    mosaic_log = getLogger("topo_tools.api.edge_mosaic")
+    mosaic_log.addHandler(unpaired)
     edge_mosaic(
         input_paths=[staged],
         overlay_path=parent,
         output_path=filled,
         issues_path=work / "mosaic_issues.parquet",
-        original_paths=sorted(base.glob("*_original.parquet")),
+        original_paths=originals,
         match_column=MATCH_KEY,
         merge=True,
         overlay_include=[MATCH_KEY, *WLD_COLS],
@@ -83,6 +97,10 @@ def _input_job(key: str, meta: tuple) -> float:
         threads=THREADS,
         tmp_dir=work,
     )
+    mosaic_log.removeHandler(unpaired)
+    if originals and unpaired.hit:
+        msg = f"{key}: no original pairs with the staged layer by adm{{n}}_pcode"
+        raise RuntimeError(msg)
     _package(work, filled)
     for path in (parent, staged, filled):
         path.unlink()

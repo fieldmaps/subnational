@@ -74,7 +74,7 @@ def _read(name: str) -> str:
 
 def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     """Raise unless ids are unique, points pair with polygons and columns are kept."""
-    poly, pts, lines = (_staged(lvl, g) for g in ("polygons", "points", "lines"))
+    poly, pts = _staged(lvl, "polygons"), _staged(lvl, "points")
     have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{poly}'").fetchall()}
     want = {
         c
@@ -89,12 +89,14 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
                (SELECT count(DISTINCT adm{lvl}_id) FROM '{poly}'),
                (SELECT count(*) FROM '{pts}'),
                (SELECT count(DISTINCT id) FROM '{pts}'),
-               (SELECT count(*) FROM '{lines}' WHERE adm_lvl NOT BETWEEN 1 AND {lvl})
+               (SELECT count(*) FROM {_read("lines")}
+                WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL})
     """).fetchall()[0]
     if not n_poly == n_ids == n_pts == n_pt_ids or bad_lvl:
         msg = (
             f"adm{lvl}: {n_poly} polygons, {n_ids} ids, {n_pts} points, "
-            f"{n_pt_ids} point ids, {bad_lvl} lines outside adm_lvl 1..{lvl}"
+            f"{n_pt_ids} point ids, {bad_lvl} per-key lines with a null adm_lvl "
+            f"or one outside 1..{MAX_LVL}"
         )
         raise ValueError(msg)
     logger.info("adm%d: %d polygons and points", lvl, n_poly)

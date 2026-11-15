@@ -18,26 +18,12 @@ from app.config import CATALOG_DIR
 logger = getLogger(__name__)
 
 
-def get_conn(
-    path: Path | None = None,
-    *,
-    reset: bool = False,
-    read_only: bool = False,
-    threads: int = 4,
-) -> DuckDBPyConnection:
-    """Open a DuckDB connection, loading spatial and httpfs.
+def get_conn(*, threads: int = 4) -> DuckDBPyConnection:
+    """Open an in-memory DuckDB connection with spatial and httpfs loaded.
 
-    path=None → in-memory; path=Path → file at that location.
-    reset=True deletes the file first (no-op for in-memory).
     Returns a ProfiledConnection (cast to DuckDBPyConnection) when DEBUG is enabled.
     """
-    if path is None:
-        conn = duckdb.connect()
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if reset:
-            path.unlink(missing_ok=True)
-        conn = duckdb.connect(str(path), read_only=read_only)
+    conn = duckdb.connect()
     conn.execute("LOAD spatial;")
     conn.execute("LOAD httpfs;")
     conn.execute("SET enable_progress_bar = false")

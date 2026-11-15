@@ -23,6 +23,7 @@ def get_conn(
     *,
     reset: bool = False,
     read_only: bool = False,
+    threads: int = 4,
 ) -> DuckDBPyConnection:
     """Open a DuckDB connection, loading spatial and httpfs.
 
@@ -42,7 +43,7 @@ def get_conn(
     conn.execute("SET enable_progress_bar = false")
     conn.execute("SET geometry_always_xy = true")
     conn.execute("SET preserve_insertion_order = false")
-    conn.execute("SET threads = 4")
+    conn.execute(f"SET threads = {threads}")
     if app.config.DEBUG:
         return cast("DuckDBPyConnection", ProfiledConnection(conn))
     return conn

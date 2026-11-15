@@ -68,7 +68,7 @@ def _input_job(key: str, meta: tuple) -> float:
     parent, staged, filled = (
         work / f"{n}.parquet" for n in ("parent", "staged", "filled")
     )
-    with closing(get_conn()) as conn:
+    with closing(get_conn(threads=THREADS)) as conn:
         conn.execute(
             f"COPY (SELECT * FROM '{PARENT}' WHERE {MATCH_KEY} = ?) "
             f"TO '{parent}' {PARQUET_OPTS}",
@@ -124,7 +124,7 @@ def _fill_job(keys: list[str]) -> float:
         for c, t in staged_columns()
         if c != MATCH_KEY
     ]
-    with closing(get_conn()) as conn:
+    with closing(get_conn(threads=THREADS)) as conn:
         conn.execute(
             f"""--sql
             COPY (

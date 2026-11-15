@@ -6,8 +6,8 @@ Pipeline that downloads, processes, and publishes global administrative boundary
 
 ```text
 app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), refresh cod-ab collections in catalog/iso3/, then register changed collections with portolan (--push uploads)
-app/_02_build/       → code the published extended layers (topo-tools code-create), edge-mosaic to the world-view ADM0, package and validate into tmp/build.duckdb
-app/_03_export/      → write catalog/global/admin{n}/admin{n}{,_points,_lines}.parquet and register them with portolan (--push uploads)
+app/_02_build/       → per key in parallel: code the published extended layer (topo-tools code-create), edge-mosaic it to its world-view ADM0 parent with its own originals, package it; then merge into catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet (geom = polygons, points, lines; mirrors the international catalog's adm0-{geom} collections)
+app/_03_export/      → tile and register the catalog/global/ collections with portolan (--push uploads)
 app/publish/         → shared portolan helpers (tiling, metadata, add, readme/check, push) for sources and export
 scripts/ingest_erm.py → yearly EuroGeographics ERM release into the catalog/iso3/ collections published from erm (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
 ```
@@ -16,7 +16,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 ## Catalog and Sources
 
-`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `iso3/{base}/` holds one source's layers per base iso3; `global/admin{n}/` holds the export for levels 1 to 4. `admin{n}.parquet` polygons carry every admin and metadata column for levels 0..n; `admin{n}_points` (`id, name..name3, pcode, adm_lvl`) and `admin{n}_lines` (`adm_lvl` 1..n, `a_`/`b_` id, names and pcode labelled at the line's own level) are lean and pair with the international ADM0 layers for country columns, coastlines and borders. Each `iso3/{base}/` collection has:
+`catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `iso3/{base}/` holds one source's layers per base iso3; `global/adm{n}-{geom}/` holds the export for levels 1 to 4. `adm{n}_polygons` carry every admin and metadata column for levels 0..n; `adm{n}_points` (`id, name..name3, pcode, adm_lvl`) and `adm{n}_lines` (`adm_lvl` 1..n, `a_`/`b_` id, names and pcode labelled at the line's own level) are lean and pair with the international ADM0 layers for country columns, coastlines and borders. Each `iso3/{base}/` collection has:
 
 - `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; for cod-ab, `PARTS` (`app/config.py`) lists them and step 1 splits the original by part and extends each.
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.
@@ -30,9 +30,18 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | frozen                           |
 | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | frozen                           |
 
-`archive/` (gitignored, never read) holds every source's layers per iso3 as `archive/{src}/{base}/`, for switching an iso3 to another source by hand. The build reads every published extended layer and generates `adm{n}_id` (`{ISO3}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`) with topo-tools `code_create`.
+`archive/` (gitignored, never read) holds every source's layers per iso3 as `archive/{src}/{base}/`, for switching an iso3 to another source by hand.
 
-ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`). The clip is the humanitarian ADM0 with each `CLIP_PARTS` parent (`app/_02_build/config.py`) replaced by its disaggregated parts, renamed `{ISO3}_{n}`. An input key matching a part covers that part; otherwise every part of its iso3 merges under the key.
+## Build
+
+Every build is full: `app/_02_build/` runs one job per published extended key (`WORKERS` x `THREADS` in `app/_02_build/config.py`, largest input first), plus one `_fill` job for the ADM0 parts no input covers. Each job works in `tmp/build/keys/{key}/`:
+
+- `code_create` generates `adm{n}_id` (`{KEY}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`), and the layer is padded to every level up to `MAX_LVL` so `fill_schema` copies its deepest level down.
+- `edge_mosaic` clips it to its own parent row of `tmp/build/parent.parquet` with only its own iso3's originals, then `package(min_level=1)` writes `admin{n}`, `points` and `lines`.
+
+`_02c_merge.py` writes the merged layers to `catalog/global/`, raises on duplicate ids, a point count that differs from the polygon count, dropped columns or lines outside `adm_lvl` 1..n, merges the issues and validation summaries into `tmp/build/issues/`, and deletes `tmp/build/keys/`.
+
+ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`). The clip is the humanitarian ADM0 with each `CLIP_PARTS` parent (`app/adm0.py`) replaced by its disaggregated parts, renamed `{ISO3}_{n}`. An input key matching a part covers that part; otherwise every part of its iso3 merges under the key.
 
 ## Key Constraints
 

@@ -15,10 +15,9 @@ from topo_tools.api import edge_extend
 
 from app._01_sources._01b_publish import publish
 from app._01_sources.config import DOWNLOAD_DIR
-from app._01_sources.schema import conform, conform_extended, write_meta
+from app._01_sources.schema import LATIN, conform, conform_extended, write_meta
 from app._01_sources.utils import catalog_path, meta_path, published_src
-from app._02_build._02a_inputs import _LATIN, adm0_path
-from app._02_build.config import ADM0_HUMANITARIAN
+from app.adm0 import ADM0_HUMANITARIAN, adm0_path
 from app.config import MAX_LVL, PARQUET_OPTS
 from app.utils import get_conn
 
@@ -226,7 +225,7 @@ def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None
         SELECT code,
             coalesce(
                 {first.format(1)},
-                min_by(name, i) FILTER (regexp_full_match(name, '{_LATIN}'))
+                min_by(name, i) FILTER (regexp_full_match(name, '{LATIN}'))
             ) AS n0,
             {first.format(2)} AS n1, {first.format(3)} AS n2, {first.format(4)} AS n3
         FROM un_pairs GROUP BY code

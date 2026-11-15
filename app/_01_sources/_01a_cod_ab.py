@@ -7,6 +7,7 @@ from pathlib import Path
 import duckdb
 from topo_tools.api import edge_extend
 
+from app.adm0 import adm0_clip_sql
 from app.config import KEEP, MAX_LVL, PARQUET_OPTS, PARTS
 from app.publish.utils import portolan
 
@@ -133,8 +134,6 @@ def _split(
     conn: duckdb.DuckDBPyConnection, original: str, lvl: int, parts: tuple
 ) -> None:
     """Write one extended layer per ADM0 clip part from the units inside it."""
-    from app._02_build._02a_inputs import adm0_clip_sql  # noqa: PLC0415 (import cycle)
-
     for part in parts:
         subset = DOWNLOAD_DIR / SRC / "split" / f"{part.lower()}.parquet"
         subset.parent.mkdir(parents=True, exist_ok=True)
@@ -164,8 +163,7 @@ def _fetch(coll: dict, rel: str, tier: str) -> Path:
     """Download a collection's data asset to tmp, replacing any earlier copy."""
     name = _data(coll)["href"].removeprefix("./")
     dest = DOWNLOAD_DIR / SRC / tier / name
-    dest.unlink(missing_ok=True)
-    return download(f"{COD_AB_DATA}/{rel}/{name}", dest, _data(coll).get("file:size"))
+    return download(f"{COD_AB_DATA}/{rel}/{name}", dest)
 
 
 def _metadata(key: str) -> dict:

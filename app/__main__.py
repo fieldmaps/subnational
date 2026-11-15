@@ -12,8 +12,6 @@ _STEPS = {
     "export": _03_export.main,
 }
 
-_BOOL_VALS = ("YES", "ON", "TRUE", "1")
-
 
 def main() -> None:
     """Run the requested stage(s) of the subnational pipeline."""
@@ -33,11 +31,9 @@ def _parse() -> str | None:
     )
     parser.add_argument(
         "--debug",
-        default=getenv("DEBUG", "").upper() in _BOOL_VALS,
-        type=lambda v: v is None or v.upper() in _BOOL_VALS,
-        nargs="?",
-        const=True,
-        help="Enable profiling and write parquet snapshots to tmp/.",
+        action="store_true",
+        default=_config.DEBUG,
+        help="Log time and memory for every DuckDB query.",
     )
     parser.add_argument(
         "--push",
@@ -54,7 +50,7 @@ def _parse() -> str | None:
     args = parser.parse_args()
     _config.PUSH = args.push
     _config.FORCE_PMTILES = args.force_pmtiles
-    _config.DEBUG = args.debug or bool(args.step)
+    _config.DEBUG = args.debug
     return args.step
 
 

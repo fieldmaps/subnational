@@ -36,8 +36,9 @@ def publish() -> None:
     """Write metadata, add changed collections, check, and push with --push."""
     ensure_catalog()
     conn = get_conn()
-    df = conn.execute(SOURCES_SQL).df()
-    rows = df.astype(object).where(df.notna(), None).to_dict("records")
+    res = conn.execute(SOURCES_SQL)
+    cols = [d[0] for d in res.description]
+    rows = [dict(zip(cols, r, strict=True)) for r in res.fetchall()]
     groups: dict[str, list[dict]] = {}
     for row in rows:
         groups.setdefault(row["base"], []).append(row)

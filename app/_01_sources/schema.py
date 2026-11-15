@@ -11,6 +11,8 @@ from app.config import CATALOG_DIR, PARQUET_OPTS, TMP_DIR
 
 logger = getLogger(__name__)
 
+# Latin-script names, preferred when a source leaves adm{n}_name empty.
+LATIN = r"[\p{Latin}\p{Common}\p{Inherited}]+"
 _LEVEL_COLS = ("name", "name1", "name2", "name3", "pcode")
 _TAIL = (
     ("valid_on", "TIMESTAMP"),

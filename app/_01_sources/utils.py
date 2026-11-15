@@ -47,16 +47,10 @@ def get_json(url: str) -> dict | list:
 
 
 @_retry
-def download(url: str, dest: Path, size: int | None = None) -> Path:
-    """Stream url to dest, skipping when dest already has the remote size."""
+def download(url: str, dest: Path) -> Path:
+    """Stream url to dest via a .part file."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     with _client() as client:
-        if size is None:
-            head = client.head(url)
-            head.raise_for_status()
-            size = int(head.headers.get("content-length", -1))
-        if dest.exists() and dest.stat().st_size == size:
-            return dest
         part = dest.with_name(dest.name + ".part")
         with client.stream("GET", url) as r:
             r.raise_for_status()

@@ -5,7 +5,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-PARQUET_OPTS = "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2)"
+# 32 MB row groups before compression (~15 MB on disk) for remote area queries.
+PARQUET_OPTS = (
+    "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2, "
+    "ROW_GROUP_SIZE_BYTES '32MB')"
+)
 os.environ["OGR_ORGANIZE_POLYGONS"] = "ONLY_CCW"
 
 load_dotenv(Path(__file__).parent.parent / ".env")

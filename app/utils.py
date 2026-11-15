@@ -44,6 +44,8 @@ def get_conn(
     conn.execute("SET geometry_always_xy = true")
     conn.execute("SET preserve_insertion_order = false")
     conn.execute(f"SET threads = {threads}")
+    # DuckDB 2.0.0 drops rows from WHERE ST_*() on shredded CRS geometry.
+    conn.execute("SET geometry_minimum_shredding_size = -1")
     if app.config.DEBUG:
         return cast("DuckDBPyConnection", ProfiledConnection(conn))
     return conn

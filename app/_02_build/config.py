@@ -11,6 +11,8 @@ NAME_FIELD = "adm{n}_name"
 CODE_FIELD = "adm{n}_id"
 # Input/overlay match column; upper-cased key so multi-extent keys (GEO_1) match.
 MATCH_KEY = "match_key"
+# World-view iso3 column of parent.parquet; one build job and collection per code.
+ISO3 = "iso_3"
 # Input column <- parent.parquet column on ADM0 parts that no input covers.
 ADM0_FILL = {
     "adm0_id": "adm0_id",

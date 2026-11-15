@@ -1,4 +1,4 @@
-"""Merge the per-key packages into catalog/global/ and check the result."""
+"""Write per-iso3 and global layers, check them and move them into catalog/."""
 
 from contextlib import closing
 from itertools import product
@@ -8,76 +8,100 @@ from shutil import move, rmtree
 
 import duckdb
 
-from app.config import GEOMS, MAX_LVL, PARQUET_OPTS
+from app.config import CATALOG_DIR, GEOMS, MAX_LVL, PARQUET_OPTS
+from app.publish.utils import portolan
 from app.utils import get_conn, global_path
 
 from ._02a_inputs import staged_columns
-from ._02b_keys import KEYS_DIR
+from ._02b_codes import CODES_DIR
 from .config import BUILD_DIR, MATCH_KEY, WLD_COLS
 
 logger = getLogger(__name__)
 
 ISSUES_DIR = BUILD_DIR / "issues"
+ISO3_DIR = CATALOG_DIR / "iso3"
 # Merged layers wait here until every level passes its checks.
 STAGE_DIR = BUILD_DIR / "global"
-# Key of a per-key file: the name of its KEYS_DIR subfolder.
-_KEY = "parse_filename(parse_dirpath(filename, 'system'), false, 'system')"
+# Code of a per-code file: the name of its CODES_DIR subfolder.
+_CODE = "parse_filename(parse_dirpath(filename, 'system'), false, 'system')"
 # Hilbert order over the world box, so each row group covers one area.
 _ORDER = (
     "ST_Hilbert(geometry, "
     "{'min_x': -180, 'min_y': -90, 'max_x': 180, 'max_y': 90}::BOX_2D)"
 )
+_LAYERS = list(product(range(1, MAX_LVL + 1), GEOMS))
 
 
 def merge() -> None:
-    """Write and check adm{n}_{polygons,points,lines}, move them into catalog/."""
+    """Write and check each code's and the global layers, move them into catalog/."""
     rmtree(STAGE_DIR, ignore_errors=True)
     STAGE_DIR.mkdir(parents=True)
+    codes = sorted(p for p in CODES_DIR.iterdir() if p.is_dir())
     with closing(get_conn()) as conn:
         _check_lines(conn)
+        for work in codes:
+            _write_code(conn, work)
         for lvl in range(1, MAX_LVL + 1):
-            _write(conn, lvl)
+            for geom in GEOMS:
+                src = (
+                    f"read_parquet('{CODES_DIR}/*/{_name(lvl, geom)}', "
+                    "union_by_name = true)"
+                )
+                _copy(conn, src, STAGE_DIR / _name(lvl, geom))
+            _check(conn, lvl)
         _merge_issues(conn)
-    for lvl, geom in product(range(1, MAX_LVL + 1), GEOMS):
+    for lvl, geom in _LAYERS:
         dest = global_path(lvl, geom)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        move(_staged(lvl, geom), dest)
+        move(STAGE_DIR / _name(lvl, geom), dest)
     STAGE_DIR.rmdir()
-    rmtree(KEYS_DIR)
+    _move_codes(codes)
+    rmtree(CODES_DIR)
 
 
-def _write(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
-    """Write and check one level's three layers."""
-    sources = {
-        "polygons": _read(f"admin{lvl}"),
-        "points": f"{_read('points')} WHERE adm_lvl = {lvl}",
-        "lines": f"{_read('lines')} WHERE adm_lvl <= {lvl}",
-    }
-    for geom, src in sources.items():
+def _write_code(conn: duckdb.DuckDBPyConnection, work: Path) -> None:
+    """Write one code's adm{n}_{geom} layers from its package output."""
+    for lvl, geom in _LAYERS:
+        src = {
+            "polygons": f"'{work}/admin{lvl}.parquet'",
+            "points": f"'{work}/points.parquet' WHERE adm_lvl = {lvl}",
+            "lines": f"'{work}/lines.parquet' WHERE adm_lvl <= {lvl}",
+        }[geom]
         cols = {r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
         drop = ", ".join(c for c in (MATCH_KEY, "overlay_fid") if c in cols)
         exclude = f" EXCLUDE ({drop})" if drop else ""
-        dest = _staged(lvl, geom)
-        conn.execute(
-            f"COPY (SELECT *{exclude} FROM {src} ORDER BY {_ORDER}) "
-            f"TO '{dest}' {PARQUET_OPTS}"
-        )
-    _check(conn, lvl)
+        _copy(conn, f"(SELECT *{exclude} FROM {src})", work / _name(lvl, geom))
 
 
-def _staged(lvl: int, geom: str) -> Path:
-    """Return STAGE_DIR/adm{n}_{geom}.parquet."""
-    return STAGE_DIR / f"adm{lvl}_{geom}.parquet"
+def _copy(conn: duckdb.DuckDBPyConnection, src: str, dest: Path) -> None:
+    """Write src to dest in Hilbert order."""
+    conn.execute(
+        f"COPY (SELECT * FROM {src} ORDER BY {_ORDER}) TO '{dest}' {PARQUET_OPTS}"
+    )
 
 
-def _read(name: str) -> str:
-    """Return a read of every key's {name}.parquet, columns matched by name."""
-    return f"read_parquet('{KEYS_DIR}/*/{name}.parquet', union_by_name = true)"
+def _name(lvl: int, geom: str) -> str:
+    """Return adm{n}_{geom}.parquet."""
+    return f"adm{lvl}_{geom}.parquet"
+
+
+def _move_codes(codes: list[Path]) -> None:
+    """Replace catalog/iso3/{code}/ layers, removing codes the build no longer has."""
+    built = {w.name for w in codes}
+    for old in sorted(ISO3_DIR.glob("*/")):
+        if old.name not in built:
+            logger.info("iso3/%s: no longer built, removing", old.name)
+            portolan("rm", "-f", f"iso3/{old.name}")
+    for work in codes:
+        dest = ISO3_DIR / work.name
+        dest.mkdir(parents=True, exist_ok=True)
+        for lvl, geom in _LAYERS:
+            move(work / _name(lvl, geom), dest / _name(lvl, geom))
 
 
 def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     """Raise unless ids are unique, points pair with polygons and columns are kept."""
-    poly, pts = _staged(lvl, "polygons"), _staged(lvl, "points")
+    poly, pts = STAGE_DIR / _name(lvl, "polygons"), STAGE_DIR / _name(lvl, "points")
     have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{poly}'").fetchall()}
     want = {
         c
@@ -105,25 +129,30 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
 
 
 def _check_lines(conn: duckdb.DuckDBPyConnection) -> None:
-    """Raise if any key's lines have a null adm_lvl or one outside 1..MAX_LVL."""
+    """Raise if any code's lines have a null adm_lvl or one outside 1..MAX_LVL."""
     bad = conn.execute(f"""--sql
-        SELECT count(*) FROM {_read("lines")}
+        SELECT count(*) FROM read_parquet('{CODES_DIR}/*/lines.parquet')
         WHERE adm_lvl IS NULL OR adm_lvl NOT BETWEEN 1 AND {MAX_LVL}
     """).fetchall()[0][0]
     if bad:
-        msg = f"{bad} per-key lines with a null adm_lvl or one outside 1..{MAX_LVL}"
+        msg = f"{bad} per-code lines with a null adm_lvl or one outside 1..{MAX_LVL}"
         raise ValueError(msg)
 
 
 def _merge_issues(conn: duckdb.DuckDBPyConnection) -> None:
-    """Merge each issues file and the validation summaries across keys, with a key."""
+    """Merge each issues file and the validation summaries across codes, with a code."""
     rmtree(ISSUES_DIR, ignore_errors=True)
     ISSUES_DIR.mkdir(parents=True)
-    for name in sorted({p.name for p in KEYS_DIR.glob("*/*_issues.parquet")}):
+    names = {
+        "code_issues.parquet" if p.name.endswith("_code_issues.parquet") else p.name
+        for p in CODES_DIR.glob("*/*_issues.parquet")
+    }
+    for name in sorted(names):
+        glob = "*_code_issues.parquet" if name == "code_issues.parquet" else name
         conn.execute(f"""--sql
             COPY (
-                SELECT {_KEY} AS build_key, * EXCLUDE (filename)
-                FROM read_parquet('{KEYS_DIR}/*/{name}', union_by_name = true,
+                SELECT {_CODE} AS build_iso3, * EXCLUDE (filename)
+                FROM read_parquet('{CODES_DIR}/*/{glob}', union_by_name = true,
                                   filename = true)
             ) TO '{ISSUES_DIR / name}' {PARQUET_OPTS}
         """)
@@ -131,16 +160,16 @@ def _merge_issues(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(f"""--sql
         COPY (
             SELECT stage, kind, severity, sum(count)::BIGINT AS count,
-                   count(DISTINCT {_KEY}) AS keys, reason
-            FROM read_csv('{KEYS_DIR}/*/*_validate_summary.csv', filename = true)
+                   count(DISTINCT {_CODE}) AS codes, reason
+            FROM read_csv('{CODES_DIR}/*/*_validate_summary.csv', filename = true)
             GROUP BY ALL
             ORDER BY stage, severity, count DESC
         ) TO '{summary}'
     """)
-    for stage, kind, count, keys in conn.execute(f"""--sql
-        SELECT stage, kind, count, keys FROM '{summary}' WHERE severity = 'error'
+    for stage, kind, count, codes in conn.execute(f"""--sql
+        SELECT stage, kind, count, codes FROM '{summary}' WHERE severity = 'error'
     """).fetchall():
         logger.warning(
-            "package: %d %s %s error(s) in %d key(s)", count, stage, kind, keys
+            "package: %d %s %s error(s) in %d code(s)", count, stage, kind, codes
         )
     logger.info("issues and validation summary: %s", ISSUES_DIR)

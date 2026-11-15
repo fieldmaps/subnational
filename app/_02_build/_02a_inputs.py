@@ -116,7 +116,7 @@ def stage(conn: duckdb.DuckDBPyConnection, key: str, meta: tuple, dest: Path) ->
     code_create(
         seed,
         coded,
-        dest.with_name("code_issues.parquet"),
+        dest.with_name(f"{key}_code_issues.parquet"),
         root_code=root,
         delimiter="-",
         min_width="auto",

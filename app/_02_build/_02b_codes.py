@@ -1,4 +1,4 @@
-"""Clip, fill down and package each input key on its own ADM0 parent, in parallel."""
+"""Edge-mosaic, fill down and package each world-view iso3 code, in parallel."""
 
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -18,6 +18,7 @@ from .config import (
     ADM0_FILL,
     BUILD_DIR,
     CODE_FIELD,
+    ISO3,
     MATCH_KEY,
     NAME_FIELD,
     THREADS,
@@ -27,9 +28,7 @@ from .config import (
 
 logger = getLogger(__name__)
 
-KEYS_DIR = BUILD_DIR / "keys"
-# Job name for the ADM0 parts that no input covers.
-FILL_JOB = "_fill"
+CODES_DIR = BUILD_DIR / "iso3"
 
 
 class _Unpaired(Handler):
@@ -43,15 +42,29 @@ class _Unpaired(Handler):
         self.hit |= "runs without originals" in record.getMessage()
 
 
-def build_keys(sources: dict[str, tuple]) -> None:
-    """Package every key into KEYS_DIR/{key}/, largest input first."""
-    rmtree(KEYS_DIR, ignore_errors=True)
-    KEYS_DIR.mkdir(parents=True)
-    order = sorted(sources, key=lambda k: -catalog_path("extended", k).stat().st_size)
+def build_codes(sources: dict[str, tuple]) -> None:
+    """Package every iso3 code into CODES_DIR/{code}/, largest inputs first."""
+    rmtree(CODES_DIR, ignore_errors=True)
+    CODES_DIR.mkdir(parents=True)
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT {ISO3}, list(DISTINCT lower({MATCH_KEY})) FROM '{PARENT}' "
+            "GROUP BY ALL"
+        ).fetchall()
+    codes = {
+        code: {k: sources[k] for k in sorted(keys) if k in sources}
+        for code, keys in rows
+    }
+    size = {
+        code: sum(catalog_path("extended", k).stat().st_size for k in inputs)
+        for code, inputs in codes.items()
+    }
     pool = ProcessPoolExecutor(WORKERS)
     try:
-        jobs = {pool.submit(_input_job, k, sources[k]): k for k in order}
-        jobs[pool.submit(_fill_job, list(sources))] = FILL_JOB
+        jobs = {
+            pool.submit(_code_job, code, codes[code]): code
+            for code in sorted(codes, key=lambda c: -size[c])
+        }
         for done, job in enumerate(as_completed(jobs), 1):
             logger.info(
                 "%s done in %.0fs (%d/%d)", jobs[job], job.result(), done, len(jobs)
@@ -60,28 +73,48 @@ def build_keys(sources: dict[str, tuple]) -> None:
         pool.shutdown(cancel_futures=True)
 
 
-def _input_job(key: str, meta: tuple) -> float:
-    """Stage key, edge-mosaic it to its parent with its own originals, package it."""
+def _code_job(code: str, inputs: dict[str, tuple]) -> float:
+    """Write CODES_DIR/{code}/admin{n}, points and lines from the code's parent rows."""
     t0 = time.perf_counter()
-    work = KEYS_DIR / key
+    work = CODES_DIR / code.lower()
     work.mkdir()
-    parent, staged, filled = (
-        work / f"{n}.parquet" for n in ("parent", "staged", "filled")
-    )
+    parent, filled = work / "parent.parquet", work / "filled.parquet"
     with closing(get_conn(threads=THREADS)) as conn:
         conn.execute(
-            f"COPY (SELECT * FROM '{PARENT}' WHERE {MATCH_KEY} = ?) "
+            f"COPY (SELECT * FROM '{PARENT}' WHERE {ISO3} = ?) "
             f"TO '{parent}' {PARQUET_OPTS}",
-            [key.upper()],
+            [code],
         )
-        stage(conn, key, meta, staged)
-    originals = sorted(catalog_path("original", key).parent.glob("*_original.parquet"))
+        staged = [work / f"{key}_staged.parquet" for key in inputs]
+        for (key, meta), dest in zip(inputs.items(), staged, strict=True):
+            stage(conn, key, meta, dest)
+        if not inputs:
+            _fill_rows(conn, parent, work / "rows.parquet")
+    if inputs:
+        _mosaic(code, work, staged, parent, filled)
+    else:
+        rows = work / "rows.parquet"
+        schema_fill(rows, filled, name_field=NAME_FIELD, code_field=CODE_FIELD)
+        rows.unlink()
+    _package(work, filled)
+    for path in (parent, filled, *staged):
+        path.unlink()
+    return time.perf_counter() - t0
+
+
+def _mosaic(
+    code: str, work: Path, staged: list[Path], parent: Path, filled: Path
+) -> None:
+    """Edge-mosaic the staged inputs to their parent rows, filling uncovered parts."""
+    keys = [p.name.removesuffix("_staged.parquet") for p in staged]
+    bases = {catalog_path("original", k).parent for k in keys}
+    originals = sorted(f for b in bases for f in b.glob("*_original.parquet"))
     unpaired = _Unpaired()
     mosaic_log = getLogger("topo_tools.api.edge_mosaic")
     mosaic_log.addHandler(unpaired)
     try:
         edge_mosaic(
-            input_paths=[staged],
+            input_paths=staged,
             overlay_path=parent,
             output_path=filled,
             issues_path=work / "mosaic_issues.parquet",
@@ -101,20 +134,12 @@ def _input_job(key: str, meta: tuple) -> float:
     finally:
         mosaic_log.removeHandler(unpaired)
     if originals and unpaired.hit:
-        msg = f"{key}: no original pairs with the staged layer by adm{{n}}_pcode"
+        msg = f"{code}: an input pairs with no original by adm{{n}}_pcode"
         raise RuntimeError(msg)
-    _package(work, filled)
-    for path in (parent, staged, filled):
-        path.unlink()
-    return time.perf_counter() - t0
 
 
-def _fill_job(keys: list[str]) -> float:
-    """Package the parent rows of ADM0 parts that no input key covers."""
-    t0 = time.perf_counter()
-    work = KEYS_DIR / FILL_JOB
-    work.mkdir()
-    rows, filled = work / "rows.parquet", work / "filled.parquet"
+def _fill_rows(conn: object, parent: Path, rows: Path) -> None:
+    """Write parent's ADM0 parts as staged rows, for a code with no input."""
     cols = [
         f"{ADM0_FILL[c]}::{t} AS {c}"
         if c in ADM0_FILL
@@ -124,22 +149,13 @@ def _fill_job(keys: list[str]) -> float:
         for c, t in staged_columns()
         if c != MATCH_KEY
     ]
-    with closing(get_conn(threads=THREADS)) as conn:
-        conn.execute(
-            f"""--sql
-            COPY (
-                SELECT {MATCH_KEY}, {", ".join(cols)}, {", ".join(WLD_COLS)}
-                FROM '{PARENT}'
-                WHERE NOT list_contains(?, {MATCH_KEY})
-            ) TO '{rows}' {PARQUET_OPTS}
-        """,
-            [[k.upper() for k in keys]],
-        )
-    schema_fill(rows, filled, name_field=NAME_FIELD, code_field=CODE_FIELD)
-    _package(work, filled)
-    for path in (rows, filled):
-        path.unlink()
-    return time.perf_counter() - t0
+    conn.execute(  # type: ignore[attr-defined]
+        f"""--sql
+        COPY (SELECT {MATCH_KEY}, {", ".join(cols)}, {", ".join(WLD_COLS)}
+              FROM '{parent}')
+        TO '{rows}' {PARQUET_OPTS}
+    """
+    )
 
 
 def _package(work: Path, filled: Path) -> None:

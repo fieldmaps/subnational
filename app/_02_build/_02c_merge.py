@@ -88,7 +88,7 @@ def _merge_issues(conn: duckdb.DuckDBPyConnection) -> None:
     for name in sorted({p.name for p in KEYS_DIR.glob("*/*_issues.parquet")}):
         conn.execute(f"""--sql
             COPY (
-                SELECT {_KEY} AS key, * EXCLUDE (filename)
+                SELECT {_KEY} AS build_key, * EXCLUDE (filename)
                 FROM read_parquet('{KEYS_DIR}/*/{name}', union_by_name = true,
                                   filename = true)
             ) TO '{ISSUES_DIR / name}' {PARQUET_OPTS}

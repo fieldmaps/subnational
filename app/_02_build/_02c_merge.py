@@ -1,12 +1,14 @@
 """Merge the per-key packages into catalog/global/ and check the result."""
 
 from contextlib import closing
+from itertools import product
 from logging import getLogger
-from shutil import rmtree
+from pathlib import Path
+from shutil import move, rmtree
 
 import duckdb
 
-from app.config import MAX_LVL, PARQUET_OPTS
+from app.config import GEOMS, MAX_LVL, PARQUET_OPTS
 from app.utils import get_conn, global_path
 
 from ._02a_inputs import staged_columns
@@ -16,6 +18,8 @@ from .config import BUILD_DIR, MATCH_KEY, WLD_COLS
 logger = getLogger(__name__)
 
 ISSUES_DIR = BUILD_DIR / "issues"
+# Merged layers wait here until every level passes its checks.
+STAGE_DIR = BUILD_DIR / "global"
 # Key of a per-key file: the name of its KEYS_DIR subfolder.
 _KEY = "parse_filename(parse_dirpath(filename, 'system'), false, 'system')"
 _ORDER = {
@@ -25,11 +29,16 @@ _ORDER = {
 
 
 def merge() -> None:
-    """Write adm{n}_{polygons,points,lines} for n >= 1, then delete KEYS_DIR."""
+    """Write and check adm{n}_{polygons,points,lines}, move them into catalog/."""
+    rmtree(STAGE_DIR, ignore_errors=True)
+    STAGE_DIR.mkdir(parents=True)
     with closing(get_conn()) as conn:
         for lvl in range(1, MAX_LVL + 1):
             _write(conn, lvl)
         _merge_issues(conn)
+    for lvl, geom in product(range(1, MAX_LVL + 1), GEOMS):
+        move(_staged(lvl, geom), global_path(lvl, geom))
+    STAGE_DIR.rmdir()
     rmtree(KEYS_DIR)
 
 
@@ -45,12 +54,17 @@ def _write(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
         cols = {r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
         drop = ", ".join(c for c in (MATCH_KEY, "overlay_fid") if c in cols)
         exclude = f" EXCLUDE ({drop})" if drop else ""
-        dest = global_path(lvl, geom)
+        dest = _staged(lvl, geom)
         conn.execute(
             f"COPY (SELECT *{exclude} FROM {src} ORDER BY {_ORDER.get(geom, ids)}) "
             f"TO '{dest}' {PARQUET_OPTS}"
         )
     _check(conn, lvl)
+
+
+def _staged(lvl: int, geom: str) -> Path:
+    """Return STAGE_DIR/adm{n}_{geom}.parquet."""
+    return STAGE_DIR / f"adm{lvl}_{geom}.parquet"
 
 
 def _read(name: str) -> str:
@@ -60,7 +74,7 @@ def _read(name: str) -> str:
 
 def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
     """Raise unless ids are unique, points pair with polygons and columns are kept."""
-    poly, pts, lines = (global_path(lvl, g) for g in ("polygons", "points", "lines"))
+    poly, pts, lines = (_staged(lvl, g) for g in ("polygons", "points", "lines"))
     have = {r[0] for r in conn.execute(f"DESCRIBE FROM '{poly}'").fetchall()}
     want = {
         c

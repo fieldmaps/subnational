@@ -79,25 +79,27 @@ def _input_job(key: str, meta: tuple) -> float:
     unpaired = _Unpaired()
     mosaic_log = getLogger("topo_tools.api.edge_mosaic")
     mosaic_log.addHandler(unpaired)
-    edge_mosaic(
-        input_paths=[staged],
-        overlay_path=parent,
-        output_path=filled,
-        issues_path=work / "mosaic_issues.parquet",
-        original_paths=originals,
-        match_column=MATCH_KEY,
-        merge=True,
-        overlay_include=[MATCH_KEY, *WLD_COLS],
-        input_exclude=[MATCH_KEY],
-        fill=ADM0_FILL,
-        clean=False,
-        fill_schema=True,
-        name_field=NAME_FIELD,
-        code_field=CODE_FIELD,
-        threads=THREADS,
-        tmp_dir=work,
-    )
-    mosaic_log.removeHandler(unpaired)
+    try:
+        edge_mosaic(
+            input_paths=[staged],
+            overlay_path=parent,
+            output_path=filled,
+            issues_path=work / "mosaic_issues.parquet",
+            original_paths=originals,
+            match_column=MATCH_KEY,
+            merge=True,
+            overlay_include=[MATCH_KEY, *WLD_COLS],
+            input_exclude=[MATCH_KEY],
+            fill=ADM0_FILL,
+            clean=False,
+            fill_schema=True,
+            name_field=NAME_FIELD,
+            code_field=CODE_FIELD,
+            threads=THREADS,
+            tmp_dir=work,
+        )
+    finally:
+        mosaic_log.removeHandler(unpaired)
     if originals and unpaired.hit:
         msg = f"{key}: no original pairs with the staged layer by adm{{n}}_pcode"
         raise RuntimeError(msg)

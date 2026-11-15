@@ -40,7 +40,7 @@ _DESCRIPTIONS = {
     "points": "One label point per admin level {n} area, with its id, names and "
     f"pcode. {_ADM0}",
     "lines": "Boundary lines for admin levels 1 to {n}, each side labelled with "
-    f"the units at the line's adm_lvl. {_ADM0}",
+    f"the units at the line's level. {_ADM0}",
 }
 
 

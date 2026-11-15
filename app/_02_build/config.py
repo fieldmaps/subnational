@@ -12,7 +12,7 @@ CODE_FIELD = "adm{n}_id"
 # Input/overlay match column; upper-cased key so multi-extent keys (GEO_1) match.
 MATCH_KEY = "match_key"
 # World-view iso3 column of parent.parquet; one build job and collection per code.
-ISO3 = "iso_3"
+ISO3 = "iso3"
 # Input column <- parent.parquet column on ADM0 parts that no input covers.
 ADM0_FILL = {
     "adm0_id": "adm0_id",
@@ -20,15 +20,13 @@ ADM0_FILL = {
     "adm0_name": "adm0_name",
     "adm0_name1": "adm0_name1",
     "adm0_name2": "adm0_name2",
-    "iso2": "iso_2",
-    "iso3": "iso_3",
 }
 # World-view columns of parent.parquet that edge_mosaic copies onto every polygon.
 WLD_COLS = (
-    "iso_cd",
-    "iso_2",
-    "iso_3",
-    "iso_3_grp",
+    "isonum",
+    "iso2",
+    "iso3",
+    "iso3_grp",
     "region3_cd",
     "region3_nm",
     "region2_cd",
@@ -39,6 +37,5 @@ WLD_COLS = (
     "status_nm",
     "wld_date",
     "wld_update",
-    "wld_view",
     "wld_notes",
 )

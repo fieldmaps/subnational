@@ -14,9 +14,11 @@ logger = getLogger(__name__)
 # Latin-script names, preferred when a source leaves adm{n}_name empty.
 LATIN = r"[\p{Latin}\p{Common}\p{Inherited}]+"
 _LEVEL_COLS = ("name", "name1", "name2", "name3", "pcode")
+# Schema column <- source column read when a source lacks the schema name.
+_FALLBACK = {"valid_from": "valid_on"}
 _TAIL = (
-    ("valid_on", "TIMESTAMP"),
-    ("valid_to", "TIMESTAMP"),
+    ("valid_from", "DATE"),
+    ("valid_to", "DATE"),
     ("version", "VARCHAR"),
     ("lang", "VARCHAR"),
     ("lang1", "VARCHAR"),
@@ -78,10 +80,11 @@ def conform(
 ) -> None:
     """Write `select_sql` to dest in the extended schema, NULL-filling gaps."""
     have = {row[0] for row in conn.execute(f"DESCRIBE {select_sql}").fetchall()}
+    src = {c: c if c in have else _FALLBACK.get(c) for c, _ in columns(lvl)}
     parts = ", ".join(
         _CLAMP
         if c == "geometry"
-        else f'CAST({f'"{c}"' if c in have else "NULL"} AS {t}) AS "{c}"'
+        else f'CAST({f'"{src[c]}"' if src[c] in have else "NULL"} AS {t}) AS "{c}"'
         for c, t in columns(lvl)
     )
     dest.parent.mkdir(parents=True, exist_ok=True)

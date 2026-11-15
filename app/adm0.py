@@ -29,7 +29,7 @@ def adm0_clip_sql() -> str:
         SELECT * FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
         WHERE adm0_src NOT IN (SELECT split_part(dst, '_', 1) FROM p)
         UNION ALL BY NAME
-        SELECT d.* REPLACE (p.dst AS adm0_src, split_part(p.dst, '_', 1) AS iso_3)
+        SELECT d.* REPLACE (p.dst AS adm0_src, split_part(p.dst, '_', 1) AS iso3)
         FROM read_parquet('{adm0_path(ADM0_DISAGGREGATED)}') d
         JOIN p ON d.adm0_src = p.src
     """

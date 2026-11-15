@@ -69,7 +69,7 @@ class Layer(NamedTuple):
     iso3: str
     adm0: tuple
     langs: list
-    valid_on: date | None
+    valid_from: date | None
 
 
 _ORG = re.compile(r"<gmd:organisationName>\s*<gco:CharacterString>([^<]+)")
@@ -88,7 +88,7 @@ def main() -> None:
     _load(conn, args.root)
     iso3 = dict(
         conn.execute(
-            "SELECT DISTINCT iso_2, iso_3 FROM read_parquet(?)",
+            "SELECT DISTINCT iso2, iso3 FROM read_parquet(?)",
             [adm0_path(ADM0_HUMANITARIAN)],
         ).fetchall()
     )
@@ -127,7 +127,7 @@ def _load(conn: duckdb.DuckDBPyConnection, root: Path) -> None:
             string_split(NAMN, '#') AS names,
             list_transform(string_split(NLN, '#'), lambda x:
                 CASE x {langs} WHEN 'UNK' THEN NULL ELSE x END) AS langs,
-            NULLIF(left(effectiveDate::VARCHAR, 10), '1900-01-01')::DATE AS valid_on
+            NULLIF(left(effectiveDate::VARCHAR, 10), '1900-01-01')::DATE AS valid_from
         FROM ST_Read('{gpkg}', layer = 'EBM_NAM')
     """)
     conn.execute(f"""--sql
@@ -209,13 +209,13 @@ def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None
             FROM nam WHERE code IN ({codes})
         )
     """)
-    langs, valid_on = conn.execute(f"""--sql
+    langs, valid_from = conn.execute(f"""--sql
         SELECT
             (SELECT list(lang ORDER BY n DESC, lang)[1:4] FROM (
                 SELECT lang, count(DISTINCT code) AS n FROM un_pairs
                 WHERE lang IS NOT NULL GROUP BY lang
             )),
-            (SELECT max(valid_on) FROM nam WHERE code IN ({codes}))
+            (SELECT max(valid_from) FROM nam WHERE code IN ({codes}))
     """).fetchall()[0]
     langs = [*(langs or []), None, None, None, None][:4]
     first = "min_by(name, i) FILTER (lang = ${})"
@@ -232,7 +232,7 @@ def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None
     """,
         langs,
     )
-    return langs, valid_on
+    return langs, valid_from
 
 
 def _pieces(conn: duckdb.DuckDBPyConnection, cc: str, orders: list[int]) -> None:
@@ -360,12 +360,12 @@ def _write_extended(conn: duckdb.DuckDBPyConnection, layer: Layer, lvl: int) -> 
                 ?::VARCHAR AS adm0_name, ?::VARCHAR AS adm0_name1, ? AS adm0_pcode,
                 ?::VARCHAR AS lang, ?::VARCHAR AS lang1,
                 ?::VARCHAR AS lang2, ?::VARCHAR AS lang3,
-                ?::DATE AS valid_on,
+                ?::DATE AS valid_from,
                 ? AS iso2, ? AS iso3, d.geom AS geometry
             FROM d {joins}
         ) TO '{raw}' {PARQUET_OPTS}
     """,
-        [*layer.adm0, layer.icc, *layer.langs, layer.valid_on, layer.icc, layer.iso3],
+        [*layer.adm0, layer.icc, *layer.langs, layer.valid_from, layer.icc, layer.iso3],
     )
     extended = WORK_DIR / f"{layer.icc}_extended.parquet"
     edge_extend(raw, extended)
@@ -408,7 +408,7 @@ def _write_meta(root: Path, cc: str, layer: Layer, lvl: int) -> None:
         "src_lang": layer.langs[0],
         "src_lang1": layer.langs[1],
         "src_lang2": layer.langs[2],
-        "src_date": layer.valid_on,
+        "src_date": layer.valid_from,
         "src_update": max(stamps, default=None),
         "src_name": "; ".join(agencies) or None,
         "src_name1": "EuroGeographics",

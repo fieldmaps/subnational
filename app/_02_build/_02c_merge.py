@@ -29,6 +29,8 @@ _ORDER = (
     "ST_Hilbert(geometry, "
     "{'min_x': -180, 'min_y': -90, 'max_x': 180, 'max_y': 90}::BOX_2D)"
 )
+# Area in an equal-area projection (Equal Earth), as the COD-AB schema asks.
+_AREA = "ST_Area(ST_Transform(geometry, 'OGC:CRS84', 'EPSG:8857')) / 1e6"
 _LAYERS = list(product(range(1, MAX_LVL + 1), GEOMS))
 
 
@@ -62,10 +64,20 @@ def merge() -> None:
 def _write_code(conn: duckdb.DuckDBPyConnection, work: Path) -> None:
     """Write one code's adm{n}_{geom} layers from its package output."""
     for lvl, geom in _LAYERS:
+        poly, code = work / _name(lvl, "polygons"), work.name.upper()
+        # level is the deepest real level a unit represents: a copied-down unit
+        # keeps its source level, an ADM0 fill keeps 0.
         src = {
-            "polygons": f"'{work}/admin{lvl}.parquet'",
-            "points": f"'{work}/points.parquet' WHERE adm_lvl = {lvl}",
-            "lines": f"'{work}/lines.parquet' WHERE adm_lvl <= {lvl}",
+            "polygons": f"(SELECT * EXCLUDE (adm_lvl), {_AREA} AS area_sqkm, "
+            f"least(coalesce(src_lvl, 0), {lvl}) AS level "
+            f"FROM '{work}/admin{lvl}.parquet')",
+            "points": f"(SELECT p.* EXCLUDE (adm_lvl), g.level "
+            f"FROM '{work}/points.parquet' p LEFT JOIN '{poly}' g "
+            f"ON p.id = g.adm{lvl}_id WHERE p.adm_lvl = {lvl})",
+            # A code's lines never leave it, so both sides carry its iso3.
+            "lines": f"(SELECT * EXCLUDE (adm_lvl), '{code}' AS a_iso3, "
+            f"'{code}' AS b_iso3, adm_lvl AS level "
+            f"FROM '{work}/lines.parquet' WHERE adm_lvl <= {lvl})",
         }[geom]
         cols = {r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
         drop = ", ".join(c for c in (MATCH_KEY, "overlay_fid") if c in cols)
@@ -107,7 +119,7 @@ def _check(conn: duckdb.DuckDBPyConnection, lvl: int) -> None:
         c
         for c, _ in staged_columns()
         if c != MATCH_KEY and not (c[:3] == "adm" and int(c[3]) > lvl)
-    } | {*WLD_COLS, "adm_lvl"}
+    } | {*WLD_COLS, "area_sqkm", "level"}
     if missing := want - have:
         msg = f"adm{lvl}_polygons is missing {sorted(missing)}"
         raise ValueError(msg)

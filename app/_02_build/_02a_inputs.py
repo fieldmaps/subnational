@@ -16,7 +16,12 @@ from app.utils import get_conn
 from .config import ADM0_FILL, BUILD_DIR, CODE_FIELD, MATCH_KEY, NAME_FIELD, WLD_COLS
 
 PARENT = BUILD_DIR / "parent.parquet"
-_META = tuple((c, t) for c, t in META_COLS if c.startswith("src_"))
+# src_lang..2 repeat lang..lang2, so the matched layers leave them out.
+_META = tuple(
+    (c, t)
+    for c, t in META_COLS
+    if c.startswith("src_") and not c.startswith("src_lang")
+)
 
 
 def sources() -> dict[str, tuple]:
@@ -31,20 +36,23 @@ def sources() -> dict[str, tuple]:
 
 
 def staged_columns() -> list[tuple[str, str]]:
-    """Return every staged (column, type), with code_create's adm{n}_id columns."""
+    """Return every staged (column, type), with code_create's adm{n}_id columns.
+
+    Leaves out the source's version and iso2/iso3; the overlay's codes replace them.
+    """
     cols = [
         (c, t)
         for name, t in columns(MAX_LVL)
+        if name not in ("iso2", "iso3", "version")
         for c in ((f"{name[:4]}_id", name) if _is_id_slot(name) else (name,))
     ]
-    cols.insert(cols.index(("adm0_pcode", "VARCHAR")), ("adm0_id", "VARCHAR"))
     return [(MATCH_KEY, "VARCHAR"), *cols, *_META]
 
 
 def write_parent(keys: list[str]) -> None:
     """Write PARENT: the clip ADM0 merged per match key, with world-view columns.
 
-    A part keeps its own key when an input has it, else merges under its iso_3.
+    A part keeps its own key when an input has it, else merges under its iso3.
     Fill columns come from the part's own row: unmatched keys are single parts.
     """
     wld = ", ".join(f"w.{c}" for c in WLD_COLS)
@@ -57,15 +65,15 @@ def write_parent(keys: list[str]) -> None:
                 WITH clip AS ({adm0_clip_sql()}), wld AS (
                     SELECT * EXCLUDE (geometry)
                     FROM read_parquet('{adm0_path(ADM0_HUMANITARIAN)}')
-                    QUALIFY row_number() OVER (PARTITION BY iso_3 ORDER BY adm0_id) = 1
+                    QUALIFY row_number() OVER (PARTITION BY iso3 ORDER BY adm0_id) = 1
                 ), keyed AS (
                     SELECT CASE WHEN list_contains($keys, adm0_src) THEN adm0_src
-                                WHEN list_contains($keys, iso_3) THEN iso_3
+                                WHEN list_contains($keys, iso3) THEN iso3
                                 ELSE adm0_src END AS {MATCH_KEY},
-                           iso_3, {", ".join(part)}, geometry
+                           iso3, {", ".join(part)}, geometry
                     FROM clip
                 ), merged AS (
-                    SELECT {MATCH_KEY}, arg_min(iso_3, adm0_id) AS iso_3,
+                    SELECT {MATCH_KEY}, arg_min(iso3, adm0_id) AS iso3,
                            {", ".join(f"arg_min({c}, adm0_id) AS {c}" for c in part)},
                            ST_Union_Agg(geometry)::GEOMETRY AS geom
                     FROM keyed
@@ -73,7 +81,7 @@ def write_parent(keys: list[str]) -> None:
                 )
                 SELECT k.{MATCH_KEY}, {wld}, {", ".join(f"k.{c}" for c in part)}, k.geom
                 FROM merged k
-                LEFT JOIN wld w ON k.iso_3 = w.iso_3
+                LEFT JOIN wld w ON k.iso3 = w.iso3
                 ORDER BY k.{MATCH_KEY}
             ) TO '{PARENT}' {PARQUET_OPTS}
         """,
@@ -89,9 +97,9 @@ def stage(conn: duckdb.DuckDBPyConnection, key: str, meta: tuple, dest: Path) ->
     path = catalog_path("extended", key)
     src_date = meta[[c for c, _ in _META].index("src_date")]
     stamp = (
-        conn.execute(
-            f"SELECT max(CAST(valid_on AS DATE)) FROM read_parquet('{path}')"
-        ).fetchall()[0][0]
+        conn.execute(f"SELECT max(valid_from) FROM read_parquet('{path}')").fetchall()[
+            0
+        ][0]
         or src_date
     )
     root = key.upper() if stamp is None else f"{key.upper()}-{stamp:%Y%m%d}"
@@ -133,8 +141,8 @@ def stage(conn: duckdb.DuckDBPyConnection, key: str, meta: tuple, dest: Path) ->
 
 
 def _is_id_slot(name: str) -> bool:
-    """adm{n}_id goes before adm{n}_name for every level below adm0."""
-    return name.endswith("_name") and name != "adm0_name"
+    """adm{n}_id goes before adm{n}_name at every level."""
+    return name.endswith("_name")
 
 
 def _src(col: str) -> str:

@@ -6,6 +6,7 @@ from itertools import product
 import app.config
 from app._01_sources._01b_publish import _license_name
 from app._01_sources.schema import SOURCES_SQL
+from app._01_sources.utils import one_unit_bases
 from app._02_build.config import ISO3
 from app.adm0 import ADM0_HUMANITARIAN, adm0_path
 from app.config import CATALOG_DIR, GEOMS, MAX_LVL
@@ -143,10 +144,12 @@ def _code_description(srcs: list[tuple]) -> str:
 
 
 def _source_notes() -> str:
-    """Summarize source and SPDX license counts across the source/ inputs."""
+    """Summarize source and SPDX license counts across the build's source inputs."""
     conn = get_conn()
     rows = conn.execute(
-        f"SELECT src, src_lic, src_url FROM ({SOURCES_SQL}) WHERE tier = 'extended'"
+        f"SELECT src, src_lic, src_url FROM ({SOURCES_SQL}) "
+        "WHERE tier = 'extended' AND NOT list_contains(?, base)",
+        [sorted(one_unit_bases(conn))],
     ).fetchall()
     conn.close()
     srcs = Counter(src for src, _, _ in rows)

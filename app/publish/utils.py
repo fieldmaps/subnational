@@ -54,7 +54,9 @@ def tile_collection(folder: Path, *, force: bool = False) -> None:
             "SELECT num_rows FROM parquet_file_metadata(?)", [str(parquet)]
         ).fetchall()[0][0]
         # tylertoo can't tile an empty layer, such as a one-unit code's lines.
-        if rows and (
+        if not rows:
+            pmtiles.unlink(missing_ok=True)
+        elif (
             force
             or not pmtiles.exists()
             or pmtiles.stat().st_mtime < parquet.stat().st_mtime

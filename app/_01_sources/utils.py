@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import duckdb
 import httpx2
 from tenacity import (
     retry,
@@ -66,6 +67,18 @@ def catalog_path(tier: str, key: str) -> Path:
     path = CATALOG_DIR / "source" / base / f"{key}_{tier}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def one_unit_bases(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Return the source bases whose original layer has a single unit."""
+    return {
+        p.parent.name
+        for p in (CATALOG_DIR / "source").glob("*/*_original.parquet")
+        if conn.execute(
+            "SELECT num_rows FROM parquet_file_metadata(?)", [str(p)]
+        ).fetchall()[0][0]
+        == 1
+    }
 
 
 def meta_path(key: str) -> Path:

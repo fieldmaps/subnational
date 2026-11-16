@@ -1,7 +1,9 @@
 """Shared HTTP and catalog-path helpers for the sources stage."""
 
+import json
 from pathlib import Path
 
+import duckdb
 import httpx2
 from tenacity import (
     retry,
@@ -31,7 +33,6 @@ _retry = retry(
 
 def _client() -> httpx2.Client:
     return httpx2.Client(
-        http2=True,
         follow_redirects=True,
         timeout=httpx2.Timeout(HTTP_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT),
     )
@@ -47,16 +48,10 @@ def get_json(url: str) -> dict | list:
 
 
 @_retry
-def download(url: str, dest: Path, size: int | None = None) -> Path:
-    """Stream url to dest, skipping when dest already has the remote size."""
+def download(url: str, dest: Path) -> Path:
+    """Stream url to dest via a .part file."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     with _client() as client:
-        if size is None:
-            head = client.head(url)
-            head.raise_for_status()
-            size = int(head.headers.get("content-length", -1))
-        if dest.exists() and dest.stat().st_size == size:
-            return dest
         part = dest.with_name(dest.name + ".part")
         with client.stream("GET", url) as r:
             r.raise_for_status()
@@ -66,14 +61,34 @@ def download(url: str, dest: Path, size: int | None = None) -> Path:
     return dest
 
 
-def catalog_path(src: str, tier: str, key: str) -> Path:
-    """Return catalog/{src}/{base}/{key}_{tier}.parquet, creating its folder."""
-    path = CATALOG_DIR / src / key.split("_", maxsplit=1)[0] / f"{key}_{tier}.parquet"
+def catalog_path(tier: str, key: str) -> Path:
+    """Return catalog/source/{base}/{key}_{tier}.parquet, creating its folder."""
+    base = key.split("_", maxsplit=1)[0]
+    path = CATALOG_DIR / "source" / base / f"{key}_{tier}.parquet"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def meta_path(src: str, key: str) -> Path:
+def one_unit_bases(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    """Return the source bases whose original layer has a single unit."""
+    return {
+        p.parent.name
+        for p in (CATALOG_DIR / "source").glob("*/*_original.parquet")
+        if conn.execute(
+            "SELECT num_rows FROM parquet_file_metadata(?)", [str(p)]
+        ).fetchall()[0][0]
+        == 1
+    }
+
+
+def meta_path(key: str) -> Path:
     """Return the collection's {base}_metadata.json sidecar path."""
     base = key.split("_", maxsplit=1)[0]
-    return catalog_path(src, "original", base).with_name(f"{base}_metadata.json")
+    return CATALOG_DIR / "source" / base / f"{base}_metadata.json"
+
+
+def published_src(key: str) -> str | None:
+    """Return the src of the collection holding key, or None if there is none."""
+    path = meta_path(key)
+    rows = json.loads(path.read_text())["rows"] if path.exists() else []
+    return rows[0]["src"] if rows else None

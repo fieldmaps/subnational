@@ -1,16 +1,24 @@
 """cod-ab extended schema shared by every extended-tier collection."""
 
 import json
+from logging import getLogger
 from pathlib import Path
 
 import duckdb
+from topo_tools.api import topo_clean, topo_detect
 
-from app.config import PARQUET_OPTS
+from app.config import CATALOG_DIR, PARQUET_OPTS, TMP_DIR
 
+logger = getLogger(__name__)
+
+# Latin-script names, preferred when a source leaves adm{n}_name empty.
+LATIN = r"[\p{Latin}\p{Common}\p{Inherited}]+"
 _LEVEL_COLS = ("name", "name1", "name2", "name3", "pcode")
+# Schema column <- source column read when a source lacks the schema name.
+_FALLBACK = {"valid_from": "valid_on"}
 _TAIL = (
-    ("valid_on", "TIMESTAMP"),
-    ("valid_to", "TIMESTAMP"),
+    ("valid_from", "DATE"),
+    ("valid_to", "DATE"),
     ("version", "VARCHAR"),
     ("lang", "VARCHAR"),
     ("lang1", "VARCHAR"),
@@ -37,7 +45,21 @@ META_COLS = (
     ("src_url", "VARCHAR"),
     ("src_grp", "VARCHAR"),
     ("via", "VARCHAR"),
+    ("via_checksum", "VARCHAR"),
 )
+_ROW = "STRUCT(" + ", ".join(f'"{c}" {t}' for c, t in META_COLS) + ")"
+# One row per published (key, tier), read from every catalog/source sidecar.
+SOURCES_SQL = f"""
+    SELECT *, split_part(key, '_', 1) AS base
+    FROM (
+        SELECT unnest(rows, recursive := true)
+        FROM read_json(
+            '{CATALOG_DIR}/source/*/*_metadata.json',
+            columns = {{'rows': '{_ROW}[]'}}
+        )
+    )
+    ORDER BY tier, key
+"""
 
 
 def columns(lvl: int) -> list[tuple[str, str]]:
@@ -58,16 +80,34 @@ def conform(
 ) -> None:
     """Write `select_sql` to dest in the extended schema, NULL-filling gaps."""
     have = {row[0] for row in conn.execute(f"DESCRIBE {select_sql}").fetchall()}
+    src = {c: c if c in have else _FALLBACK.get(c) for c, _ in columns(lvl)}
     parts = ", ".join(
         _CLAMP
         if c == "geometry"
-        else f'CAST({f'"{c}"' if c in have else "NULL"} AS {t}) AS "{c}"'
+        else f'CAST({f'"{src[c]}"' if src[c] in have else "NULL"} AS {t}) AS "{c}"'
         for c, t in columns(lvl)
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     conn.execute(
         f"COPY (SELECT {parts} FROM ({select_sql})) TO '{dest}' {PARQUET_OPTS}"
     )
+
+
+def conform_extended(
+    conn: duckdb.DuckDBPyConnection, select_sql: str, lvl: int, dest: Path
+) -> None:
+    """Conform an extended layer, then topo_clean it if topo_detect finds defects."""
+    conform(conn, select_sql, lvl, dest)
+    work = TMP_DIR / "sources" / "coverage"
+    work.mkdir(parents=True, exist_ok=True)
+    issues = work / f"{dest.stem}_issues.parquet"
+    topo_detect(dest, issues, threads=4)
+    if not conn.execute(f"SELECT count(*) FROM '{issues}'").fetchall()[0][0]:
+        return
+    logger.warning("%s: coverage defects, cleaning", dest.name)
+    clean = work / f"{dest.stem}_clean.parquet"
+    topo_clean(dest, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
+    conform(conn, f"SELECT * FROM read_parquet('{clean}')", lvl, dest)
 
 
 def write_meta(meta: dict, dest: Path) -> None:

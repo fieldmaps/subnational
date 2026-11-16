@@ -5,7 +5,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-PARQUET_OPTS = "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2)"
+# 32 MB row groups before compression (~15 MB on disk) for remote area queries.
+PARQUET_OPTS = (
+    "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2, "
+    "ROW_GROUP_SIZE_BYTES '32MB')"
+)
+# One country holds few 32 MB groups, each spanning most of it; 8 MB keeps locality.
+ISO3_PARQUET_OPTS = PARQUET_OPTS.replace("'32MB'", "'8MB'")
 os.environ["OGR_ORGANIZE_POLYGONS"] = "ONLY_CCW"
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -17,20 +23,15 @@ FORCE_PMTILES: bool = os.getenv("FORCE_PMTILES", "").upper() in _BOOL_VALS
 
 PKG_DIR = Path(__file__).parent
 TMP_DIR = PKG_DIR.parent / "tmp"
-OUTPUTS_DIR = PKG_DIR.parent / "outputs"
 
 CATALOG_DIR = PKG_DIR.parent / "catalog"
-SOURCES_TABLE = TMP_DIR / "sources" / "sources.parquet"
-BUILD_DB = TMP_DIR / "build.duckdb"
-EDGE_MATCHED_DIR = OUTPUTS_DIR / "edge-matched"
 
-# Catalog source folders, highest build priority first.
-SOURCES = ("cod-ab", "erm", "cod-ab-legacy", "geoboundaries")
-# Per-iso3 src overriding SOURCES order, where it is deeper and matches Mapbox.
-PREFER = {"mda": "erm", "pol": "erm", "svk": "erm"}
+# iso3s whose published layer cod-ab must not replace (deeper, matches Mapbox).
+KEEP = {"mda", "pol", "svk"}
+# cod-ab iso3s published as one extended layer per ADM0 clip part.
+PARTS = {"geo": ("GEO_1", "GEO_2", "GEO_3"), "jam": ("JAM_1",), "zaf": ("ZAF_1",)}
 TIERS = ("extended", "original")
 MAX_LVL = 4
 
 GEOMS = ("polygons", "lines", "points")
 HTTP_TIMEOUT = 60
-WLD = os.getenv("WLD", "intl")

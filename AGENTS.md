@@ -37,9 +37,9 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 Every build is full: `app/_02_build/` runs one job per world-view iso3 (`WORKERS` x `THREADS` in `app/_02_build/config.py`, largest inputs first), each working in `tmp/build/iso3/{iso3}/`:
 
 - `code_create` generates `adm{n}_id` (`{KEY}-{YYYYMMDD}-{seq}...`, numbered within each parent by `adm{n}_pcode`), and the layer is padded to every level up to `MAX_LVL` so `fill_schema` copies its deepest level down.
-- `edge_mosaic` clips the code's keys to its parent rows of `tmp/build/parent.parquet` with only their bases' originals, filling parts no key covers from `ADM0_FILL`, then `package(min_level=1)` writes `admin{n}`, `points` and `lines`. A code with no input key goes through `schema_fill` and `package` alone.
+- `edge_mosaic` clips the code's keys to its parent rows of `tmp/build/parent.parquet` with only their bases' originals, filling parts no key covers from `ADM0_FILL`, then `package(min_level=1)` writes `admin{n}`, `points` and `lines`. A key whose base original has one unit is not an input, and a code with no input key goes through `schema_fill` and `package` alone.
 
-`_02c_merge.py` writes each code's 12 layers, then their union to `tmp/build/global/`, all in Hilbert order, and raises unless every global level has distinct non-null ids, one point per polygon with a matching id, every expected column, and per-code lines with `adm_lvl` 1..`MAX_LVL`. It then merges the issues and validation summaries into `tmp/build/issues/`, moves the layers into `catalog/global/` and `catalog/iso3/{iso3}/` (`portolan rm` on codes not built), and deletes `tmp/build/iso3/`.
+`_02c_merge.py` writes each code's 12 layers, then their union to `tmp/build/global/`, all in Hilbert order (the code's layers in 8 MB row groups, `ISO3_PARQUET_OPTS`), and raises unless every global level has distinct non-null ids, one point per polygon with a matching id, every expected column, and per-code lines with `adm_lvl` 1..`MAX_LVL`. It then merges the issues and validation summaries into `tmp/build/issues/`, moves the layers into `catalog/global/` and `catalog/iso3/{iso3}/` (`portolan rm` on codes not built), and deletes `tmp/build/iso3/`.
 
 ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the local `../international/catalog`). The clip is the humanitarian ADM0 with each `CLIP_PARTS` parent (`app/adm0.py`) replaced by its disaggregated parts, renamed `{ISO3}_{n}`. An input key matching a part covers that part; otherwise every part of its iso3 merges under the key.
 
@@ -48,7 +48,7 @@ ADM0 clip layers: `https://data.source.coop/fieldmaps/international` (or the loc
 - No PostgreSQL, no PostGIS, no Docker database service.
 - Use DuckDB (`ST_Read`, `COPY ... PARQUET_OPTS`) for reading and writing geodata; `gdal vector` only where DuckDB can't.
 - `catalog/.portolan/config.yaml` sets `add_bbox: false` and `sort: none` so `portolan add` keeps files as written, and `pmtiles.max_zoom: 12`.
-- portolan-cli and tylertoo are project dependencies (`uv sync`). `tile_collection` in `app/publish/utils.py` tiles each `<stem>.parquet` as `<stem>.pmtiles` with tylertoo (max zoom 12), and `portolan add` (no `--pmtiles`) registers the existing tiles.
+- portolan-cli and tylertoo are project dependencies (`uv sync`). `tile_collection` in `app/publish/utils.py` tiles each non-empty `<stem>.parquet` as `<stem>.pmtiles` with tylertoo (max zoom 12), and `portolan add` (no `--pmtiles`) registers the existing tiles.
 - `app/publish/fieldmaps_publish.py` runs portolan with the repo-root `.env` loaded, and `--push` goes through its `push()`, which runs `aws s3 sync` with the repo-root `aws.config` (AWS CLI on PATH), `versions.json` last, and raises if any upload fails. Keep it identical to the copies in fieldmaps/international, OCHA-DAP/cod-app and OCHA-DAP/adm0-app.
 - DuckDB built-in GDAL (`FORMAT GDAL`) handles GPKG/GDB/XLSX export.
 

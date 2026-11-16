@@ -10,7 +10,7 @@ from shutil import rmtree
 from topo_tools.api import edge_mosaic, package, schema_fill
 
 from app._01_sources.utils import catalog_path
-from app.config import PARQUET_OPTS
+from app.config import CATALOG_DIR, PARQUET_OPTS
 from app.utils import get_conn
 
 from ._02a_inputs import PARENT, stage, staged_columns
@@ -51,8 +51,21 @@ def build_codes(sources: dict[str, tuple]) -> None:
             f"SELECT {ISO3}, list(DISTINCT lower({MATCH_KEY})) FROM '{PARENT}' "
             "GROUP BY ALL"
         ).fetchall()
+        # A one-unit source adds no subdivision; its code is filled from ADM0.
+        one_unit = {
+            p.parent
+            for p in (CATALOG_DIR / "source").glob("*/*_original.parquet")
+            if conn.execute(
+                "SELECT num_rows FROM parquet_file_metadata(?)", [str(p)]
+            ).fetchall()[0][0]
+            == 1
+        }
     codes = {
-        code: {k: sources[k] for k in sorted(keys) if k in sources}
+        code: {
+            k: sources[k]
+            for k in sorted(keys)
+            if k in sources and catalog_path("original", k).parent not in one_unit
+        }
         for code, keys in rows
     }
     size = {

@@ -10,6 +10,8 @@ PARQUET_OPTS = (
     "(COMPRESSION ZSTD, COMPRESSION_LEVEL 15, GEOPARQUET_VERSION V2, "
     "ROW_GROUP_SIZE_BYTES '32MB')"
 )
+# One country holds few 32 MB groups, each spanning most of it; 8 MB keeps locality.
+ISO3_PARQUET_OPTS = PARQUET_OPTS.replace("'32MB'", "'8MB'")
 os.environ["OGR_ORGANIZE_POLYGONS"] = "ONLY_CCW"
 
 load_dotenv(Path(__file__).parent.parent / ".env")

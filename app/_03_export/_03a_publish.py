@@ -98,7 +98,9 @@ def _publish_codes(when: list[str], notes: str) -> None:
         ).fetchall()
     )
     stale = stale_collections()
-    for folder in sorted((CATALOG_DIR / "iso3").glob("*/")):
+    for folder in sorted(
+        p.parent for p in (CATALOG_DIR / "iso3").glob("*/adm1_polygons.parquet")
+    ):
         code = folder.name
         srcs = conn.execute(
             f"SELECT DISTINCT src_grp, src_name, src_lic, src_url "

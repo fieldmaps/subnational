@@ -7,6 +7,7 @@ from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import duckdb
 import tylertoo
 
 import app.config
@@ -49,7 +50,11 @@ def tile_collection(folder: Path, *, force: bool = False) -> None:
     """Tile each <stem>.parquet in folder as <stem>.pmtiles when missing or older."""
     for parquet in sorted(folder.glob("*.parquet")):
         pmtiles = parquet.with_suffix(".pmtiles")
-        if (
+        rows = duckdb.execute(
+            "SELECT num_rows FROM parquet_file_metadata(?)", [str(parquet)]
+        ).fetchall()[0][0]
+        # tylertoo can't tile an empty layer, such as a one-unit code's lines.
+        if rows and (
             force
             or not pmtiles.exists()
             or pmtiles.stat().st_mtime < parquet.stat().st_mtime

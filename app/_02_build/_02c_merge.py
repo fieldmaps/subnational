@@ -8,7 +8,13 @@ from shutil import move, rmtree
 
 import duckdb
 
-from app.config import CATALOG_DIR, GEOMS, MAX_LVL, PARQUET_OPTS
+from app.config import (
+    CATALOG_DIR,
+    GEOMS,
+    ISO3_PARQUET_OPTS,
+    MAX_LVL,
+    PARQUET_OPTS,
+)
 from app.publish.utils import portolan
 from app.utils import get_conn, global_path
 
@@ -82,14 +88,19 @@ def _write_code(conn: duckdb.DuckDBPyConnection, work: Path) -> None:
         cols = {r[0] for r in conn.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
         drop = ", ".join(c for c in (MATCH_KEY, "overlay_fid") if c in cols)
         exclude = f" EXCLUDE ({drop})" if drop else ""
-        _copy(conn, f"(SELECT *{exclude} FROM {src})", work / _name(lvl, geom))
+        _copy(
+            conn,
+            f"(SELECT *{exclude} FROM {src})",
+            work / _name(lvl, geom),
+            ISO3_PARQUET_OPTS,
+        )
 
 
-def _copy(conn: duckdb.DuckDBPyConnection, src: str, dest: Path) -> None:
+def _copy(
+    conn: duckdb.DuckDBPyConnection, src: str, dest: Path, opts: str = PARQUET_OPTS
+) -> None:
     """Write src to dest in Hilbert order."""
-    conn.execute(
-        f"COPY (SELECT * FROM {src} ORDER BY {_ORDER}) TO '{dest}' {PARQUET_OPTS}"
-    )
+    conn.execute(f"COPY (SELECT * FROM {src} ORDER BY {_ORDER}) TO '{dest}' {opts}")
 
 
 def _name(lvl: int, geom: str) -> str:
@@ -100,7 +111,7 @@ def _name(lvl: int, geom: str) -> str:
 def _move_codes(codes: list[Path]) -> None:
     """Replace catalog/iso3/{code}/ layers, removing codes the build no longer has."""
     built = {w.name for w in codes}
-    for old in sorted(ISO3_DIR.glob("*/")):
+    for old in sorted(p.parent for p in ISO3_DIR.glob("*/adm1_polygons.parquet")):
         if old.name not in built:
             logger.info("iso3/%s: no longer built, removing", old.name)
             portolan("rm", "-f", f"iso3/{old.name}")

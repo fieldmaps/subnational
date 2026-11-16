@@ -7,7 +7,7 @@ from logging import WARNING, Handler, LogRecord, getLogger
 from pathlib import Path
 from shutil import rmtree
 
-from topo_tools.api import edge_mosaic, package, schema_fill
+from topo_tools.api import edge_mosaic, package, package_lines, schema_fill
 
 from app._01_sources.utils import catalog_path, one_unit_bases
 from app.config import PARQUET_OPTS
@@ -105,7 +105,7 @@ def _code_job(code: str, inputs: dict[str, tuple]) -> float:
         rows = work / "rows.parquet"
         schema_fill(rows, filled, name_field=NAME_FIELD, code_field=CODE_FIELD)
         rows.unlink()
-    _package(work, filled)
+    _package(code, work, filled)
     for path in (parent, filled, *staged):
         path.unlink()
     return time.perf_counter() - t0
@@ -167,7 +167,7 @@ def _fill_rows(conn: object, parent: Path, rows: Path) -> None:
     )
 
 
-def _package(work: Path, filled: Path) -> None:
+def _package(code: str, work: Path, filled: Path) -> None:
     """Package filled into work/admin{n}, points and lines for levels 1 and up."""
     # Clip seams are accepted; validation errors are reported, not raised.
     package(
@@ -181,3 +181,27 @@ def _package(work: Path, filled: Path) -> None:
         threads=THREADS,
         tmp_dir=work,
     )
+    lines_input = work / "lines_input.parquet"
+    with closing(get_conn(threads=THREADS)) as conn:
+        parts = conn.execute(
+            f"SELECT count(DISTINCT adm0_id) FROM '{filled}'"
+        ).fetchall()[0][0]
+        if parts <= 1:
+            return
+        # Edges between parts bound adm1 units of the code, not ADM0 ones.
+        conn.execute(
+            f"COPY (SELECT * REPLACE (? AS adm0_id) FROM '{filled}') "
+            f"TO '{lines_input}' {PARQUET_OPTS}",
+            [code],
+        )
+    package_lines(
+        lines_input,
+        work / "lines.parquet",
+        NAME_FIELD,
+        CODE_FIELD,
+        min_level=1,
+        threads=THREADS,
+        tmp_dir=work,
+        check_topology=False,
+    )
+    lines_input.unlink()

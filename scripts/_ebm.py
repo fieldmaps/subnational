@@ -19,7 +19,7 @@ from app._01_sources.schema import (
     split_extended,
     write_meta,
 )
-from app._01_sources.utils import catalog_path, meta_path, published_src
+from app._01_sources.utils import catalog_path, drop_stale, meta_path, published_src
 from app.adm0 import ADM0_HUMANITARIAN, adm0_path
 from app.config import MAX_LVL, PARQUET_OPTS, PARTS
 from app.publish.utils import portolan
@@ -100,9 +100,12 @@ def run(product: Product, doc: str) -> None:
         if src == product.src:
             _country(conn, product, args.root, cc, iso3)
         elif named and (src is None or src in product.adopt):
+            if not _orders(conn, product, cc):
+                logger.info("%s: no subnational orders, keeping %s", cc, src)
+                continue
             for key in keys:
-                if published_src(key) not in (None, product.src):
-                    logger.info("%s: replacing %s with %s", key, src, product.src)
+                if (other := published_src(key)) in product.adopt:
+                    logger.info("%s: replacing %s with %s", key, other, product.src)
                     portolan("rm", "-f", f"source/{key}")
             _country(conn, product, args.root, cc, iso3)
         elif named:
@@ -131,7 +134,8 @@ def _load(conn: duckdb.DuckDBPyConnection, product: Product, root: Path) -> None
         CREATE OR REPLACE TABLE k AS
         SELECT *, CASE ICC {merge} ELSE ICC END AS cc
         FROM pa
-        WHERE TAA IN {product.taa_keep} AND ICC NOT LIKE '%#%' AND ICC <> 'XX'
+        WHERE TAA IN ({", ".join(map(str, product.taa_keep))})
+          AND ICC NOT LIKE '%#%' AND ICC <> 'XX'
     """)
     conn.execute(f"""--sql
         CREATE OR REPLACE TABLE nam AS
@@ -155,6 +159,27 @@ def _load(conn: duckdb.DuckDBPyConnection, product: Product, root: Path) -> None
     """)
 
 
+def _orders(conn: duckdb.DuckDBPyConnection, product: Product, cc: str) -> list[int]:
+    """Return the USE orders of cc that hold codes and that SKIP keeps."""
+    uses = range(2, product.shn + 2)
+    present = conn.execute(
+        "SELECT "
+        + ", ".join(f"bool_or(SHN{u - 1} <> 'UNK')" for u in uses)
+        + " FROM k WHERE cc = ?",
+        [cc],
+    ).fetchall()[0]
+    return [
+        u
+        for u, has in zip(uses, present, strict=True)
+        if has and u not in product.skip.get(cc, set())
+    ]
+
+
+def _ext_keys(key: str) -> list[str]:
+    """Return the extended-tier keys of key: one per PARTS clip part, else key."""
+    return [p.lower() for p in PARTS.get(key, ())] or [key]
+
+
 def _country(
     conn: duckdb.DuckDBPyConnection,
     product: Product,
@@ -164,18 +189,7 @@ def _country(
 ) -> None:
     """Write original and extended layers plus metadata for cc and its SPLIT parts."""
     work = DOWNLOAD_DIR / product.src
-    uses = range(2, product.shn + 2)
-    present = conn.execute(
-        "SELECT "
-        + ", ".join(f"bool_or(SHN{u - 1} <> 'UNK')" for u in uses)
-        + " FROM k WHERE cc = ?",
-        [cc],
-    ).fetchall()[0]
-    orders = [
-        u
-        for u, has in zip(uses, present, strict=True)
-        if has and u not in product.skip.get(cc, set())
-    ]
+    orders = _orders(conn, product, cc)
     lvl = len(orders)
     if lvl == 0:
         logger.info("%s: no subnational orders, skipping", cc)
@@ -205,6 +219,8 @@ def _country(
             f"CREATE OR REPLACE TABLE pt AS SELECT * FROM p WHERE {where}", [arg]
         )
         layer = Layer(icc, iso3[icc], names, *_names(conn, lvl))
+        key = layer.iso3.lower()
+        drop_stale(key, {("original", key)} | {("extended", k) for k in _ext_keys(key)})
         _write_extended(conn, layer, lvl, work)
         _write_original(work / f"{icc}.parquet", layer.iso3.lower(), lvl)
         counts = conn.execute(
@@ -396,10 +412,10 @@ def _write_extended(
     """,
         [*layer.adm0, layer.icc, *layer.langs, layer.valid_from, layer.icc, layer.iso3],
     )
-    key = layer.iso3.lower()
-    if key in PARTS:
+    keys = _ext_keys(layer.iso3.lower())
+    if len(keys) > 1:
         original = f"SELECT * FROM read_parquet('{raw}')"
-        split_extended(conn, original, lvl, PARTS[key], work / "split")
+        split_extended(conn, original, lvl, PARTS[layer.iso3.lower()], work / "split")
         return
     extended = work / f"{layer.icc}_extended.parquet"
     edge_extend(raw, extended)
@@ -407,7 +423,7 @@ def _write_extended(
         conn,
         f"SELECT * FROM read_parquet('{extended}')",
         lvl,
-        catalog_path("extended", layer.iso3.lower()),
+        catalog_path("extended", keys[0]),
     )
 
 
@@ -446,5 +462,5 @@ def _write_meta(product: Product, root: Path, cc: str, layer: Layer, lvl: int) -
     }
     path = meta_path(row["key"])
     write_meta({**row, "tier": "original"}, path)
-    for key in [p.lower() for p in PARTS.get(row["key"], ())] or [row["key"]]:
+    for key in _ext_keys(row["key"]):
         write_meta({**row, "key": key, "tier": "extended"}, path)

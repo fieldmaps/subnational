@@ -13,6 +13,7 @@ from tenacity import (
 )
 
 from app.config import CATALOG_DIR, HTTP_TIMEOUT
+from app.publish.utils import portolan
 
 from .config import DOWNLOAD_CHUNK_SIZE, HTTP_CONNECT_TIMEOUT
 
@@ -92,3 +93,19 @@ def published_src(key: str) -> str | None:
     path = meta_path(key)
     rows = json.loads(path.read_text())["rows"] if path.exists() else []
     return rows[0]["src"] if rows else None
+
+
+def drop_stale(key: str, rows: dict[tuple[str, str], dict]) -> None:
+    """Remove a collection's layers and sidecar rows that `rows` no longer lists."""
+    path = meta_path(key)
+    if not path.exists():
+        return
+    have = json.loads(path.read_text())["rows"]
+    for r in have:
+        if (r["tier"], r["key"]) in rows:
+            continue
+        stem = catalog_path(r["tier"], r["key"]).with_suffix("")
+        for f in stem.parent.glob(f"{stem.name}.*"):
+            portolan("rm", "-f", f"source/{key}/{f.name}")
+    keep = [r for r in have if (r["tier"], r["key"]) in rows]
+    path.write_text(json.dumps({"rows": keep}, indent=2) + "\n")

@@ -17,7 +17,14 @@ from .config import (
     SRC,
 )
 from .schema import conform, conform_extended, split_extended, write_meta
-from .utils import catalog_path, download, get_json, meta_path, published_src
+from .utils import (
+    catalog_path,
+    download,
+    drop_stale,
+    get_json,
+    meta_path,
+    published_src,
+)
 
 logger = getLogger(__name__)
 
@@ -76,7 +83,7 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
         if src not in (None, SRC):
             logger.info("%s: replacing %s with %s", key, src, SRC)
             portolan("rm", "-f", f"source/{key}")
-        _drop_stale(key, rows)
+        drop_stale(key, rows)
         paths = {t: _fetch(c, f"{t}/{layer}", t) for t, c in colls.items()}
         original = (
             f"SELECT * FROM read_parquet('{paths['original']}'), ("
@@ -110,22 +117,6 @@ def _is_current(key: str, rows: dict[tuple[str, str], dict]) -> bool:
         if any(have[tk].get(k) != v for k, v in want.items()):
             return False
     return True
-
-
-def _drop_stale(key: str, rows: dict[tuple[str, str], dict]) -> None:
-    """Remove a collection's layers and sidecar rows that `rows` no longer lists."""
-    path = meta_path(key)
-    if not path.exists():
-        return
-    have = json.loads(path.read_text())["rows"]
-    for r in have:
-        if (r["tier"], r["key"]) in rows:
-            continue
-        stem = catalog_path(r["tier"], r["key"]).with_suffix("")
-        for f in stem.parent.glob(f"{stem.name}.*"):
-            portolan("rm", "-f", f"source/{key}/{f.name}")
-    keep = [r for r in have if (r["tier"], r["key"]) in rows]
-    path.write_text(json.dumps({"rows": keep}, indent=2) + "\n")
 
 
 def _data(coll: dict) -> dict:

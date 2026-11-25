@@ -21,7 +21,7 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 - `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; `PARTS` (`app/config.py`) lists them, and the cod-ab refresh and `scripts/_ebm.py` split the original by part and extend each (`split_extended`).
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.
 - Both tiers use the cod-ab extended schema for every source (`adm{n}_name..name3, adm{n}_pcode` for n = lvl..0, then `valid_from, valid_to, version, lang..lang3, iso2, iso3, geometry`), defined in `app/_01_sources/schema.py`.
-- `original` tier: the source's own geometry (for `erm` and `egm`, its units dissolved before extension); `extended` tier: that layer extended past its coastline, written as a clean coverage by `conform_extended` (`app/_01_sources/schema.py`: topo-tools `topo_detect`, then `topo_clean` on any defect).
+- `original` tier: the source's own geometry (for `erm` and `egm`, its units dissolved before extension; for `egm`, also cleaned by `conform_extended`); `extended` tier: that layer extended past its coastline, written as a clean coverage by `conform_extended` (`app/_01_sources/schema.py`: topo-tools `topo_detect`, then `topo_clean` on any defect).
 
 | `src`           | Upstream                                     | Refresh                          |
 | --------------- | -------------------------------------------- | -------------------------------- |

@@ -57,6 +57,7 @@ class Product(NamedTuple):
     extra: dict[str, tuple[str, str]]
     agencies: Callable[[Path, list[str]], tuple[list[str], list[date]]]
     adopt: set[str]
+    clean_original: bool
 
 
 class Layer(NamedTuple):
@@ -222,7 +223,8 @@ def _country(
         key = layer.iso3.lower()
         drop_stale(key, {("original", key)} | {("extended", k) for k in _ext_keys(key)})
         _write_extended(conn, layer, lvl, work)
-        _write_original(work / f"{icc}.parquet", layer.iso3.lower(), lvl)
+        raw = work / f"{icc}.parquet"
+        _write_original(raw, layer.iso3.lower(), lvl, clean=product.clean_original)
         counts = conn.execute(
             "SELECT "
             + ", ".join(f"count(DISTINCT c{i})" for i in range(1, lvl + 1))
@@ -427,11 +429,12 @@ def _write_extended(
     )
 
 
-def _write_original(raw: Path, key: str, lvl: int) -> None:
+def _write_original(raw: Path, key: str, lvl: int, *, clean: bool) -> None:
     """Write the dissolved, unextended layer in the extended schema as `original`."""
     with duckdb.connect() as conn:
         conn.execute("LOAD spatial")
-        conform(
+        write = conform_extended if clean else conform
+        write(
             conn,
             f"SELECT * FROM read_parquet('{raw}')",
             lvl,

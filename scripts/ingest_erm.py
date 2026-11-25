@@ -58,6 +58,7 @@ ERM = Product(
     extra={},
     agencies=_agencies,
     adopt={"egm", "cod-ab-legacy", "geoboundaries"},
+    clean_original=False,
 )
 
 if __name__ == "__main__":

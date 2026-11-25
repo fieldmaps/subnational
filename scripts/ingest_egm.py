@@ -39,6 +39,7 @@ EGM = Product(
     extra={"RS": ("PolbndA_optionRS", "EBM_NAM_optionRS")},
     agencies=_agencies,
     adopt={"cod-ab-legacy", "geoboundaries"},
+    clean_original=True,
 )
 
 if __name__ == "__main__":

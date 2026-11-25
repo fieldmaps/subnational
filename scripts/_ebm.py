@@ -1,6 +1,7 @@
 """Ingest a EuroGeographics EBM product (ERM, EGM) release into catalog/source/."""
 
-from argparse import ArgumentParser
+import re
+from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
 from datetime import date
 from logging import getLogger
@@ -91,34 +92,51 @@ def run(product: Product, doc: str) -> None:
         r[0] for r in conn.execute("SELECT DISTINCT cc FROM k ORDER BY cc").fetchall()
     ]
     for cc in countries:
-        named = args.icc is not None and cc in args.icc
-        if args.icc is not None and not named:
-            continue
-        keys = [iso3[cc].lower()] + [
-            iso3[icc].lower() for icc, _ in product.split.get(cc, {}).values()
-        ]
-        src = published_src(keys[0])
-        if src == product.src:
-            _country(conn, product, args.root, cc, iso3)
-        elif named and (src is None or src in product.adopt):
-            if not _orders(conn, product, cc):
-                logger.info("%s: no subnational orders, keeping %s", cc, src)
-                continue
-            for key in keys:
-                if (other := published_src(key)) in product.adopt:
-                    logger.info("%s: replacing %s with %s", key, other, product.src)
-                    portolan("rm", "-f", f"source/{key}")
-            _country(conn, product, args.root, cc, iso3)
-        elif named:
-            logger.info("%s: published from %s, skipping", cc, src)
+        if args.icc is None or cc in args.icc:
+            _select(conn, product, args, cc, iso3)
     conn.close()
     if not args.skip_publish:
         publish()
 
 
+def _select(
+    conn: duckdb.DuckDBPyConnection,
+    product: Product,
+    args: Namespace,
+    cc: str,
+    iso3: dict[str, str],
+) -> None:
+    """Write cc if published from product or adopted via --icc, else log why not."""
+    named = args.icc is not None
+    keys = [iso3[cc].lower()] + [
+        iso3[icc].lower() for icc, _ in product.split.get(cc, {}).values()
+    ]
+    src = published_src(keys[0])
+    adoptable = src is None or src in product.adopt
+    if src == product.src:
+        _country(conn, product, args.root, cc, iso3)
+    elif named and adoptable:
+        if not _orders(conn, product, cc):
+            logger.info("%s: no subnational orders, keeping %s", cc, src)
+            return
+        for key in keys:
+            if (other := published_src(key)) in product.adopt:
+                logger.info("%s: replacing %s with %s", key, other, product.src)
+                portolan("rm", "-f", f"source/{key}")
+        _country(conn, product, args.root, cc, iso3)
+    elif named:
+        logger.info("%s: published from %s, skipping", cc, src)
+    elif adoptable and _orders(conn, product, cc):
+        logger.info("%s: adoption candidate over %s, pass --icc %s", cc, src, cc)
+
+
 def _load(conn: duckdb.DuckDBPyConnection, product: Product, root: Path) -> None:
     """Load the kept PolbndA pieces as `k` and split EBM_NAM names as `nam`."""
-    gpkg = root / product.gpkg
+    found = sorted(root.glob(product.gpkg))
+    if len(found) != 1:
+        msg = f"{root}: expected one {product.gpkg}, found {[str(f) for f in found]}"
+        raise FileNotFoundError(msg)
+    gpkg = found[0]
     merge = " ".join(f"WHEN '{a}' THEN '{b}'" for a, b in product.merge.items())
     langs = " ".join(f"WHEN '{a}' THEN '{b}'" for a, b in LANGS.items())
     polys = ["PolbndA", *(p for p, _ in product.extra.values())]
@@ -221,6 +239,7 @@ def _country(
         )
         layer = Layer(icc, iso3[icc], names, *_names(conn, lvl))
         key = layer.iso3.lower()
+        published = _published_counts(conn, key)
         drop_stale(key, {("original", key)} | {("extended", k) for k in _ext_keys(key)})
         _write_extended(conn, layer, lvl, work)
         raw = work / f"{icc}.parquet"
@@ -231,10 +250,23 @@ def _country(
             + " FROM pt"
         ).fetchall()[0]
         logger.info(
-            "%s: orders %s, units per level %s, langs %s",
-            icc, orders, counts, layer.langs,
+            "%s: orders %s, units per level %s (published %s), langs %s",
+            icc, orders, counts, published, layer.langs,
         )  # fmt: skip
         _write_meta(product, root, cc, layer, lvl)
+
+
+def _published_counts(conn: duckdb.DuckDBPyConnection, key: str) -> tuple:
+    """Return the distinct pcodes per level of key's published original, () if none."""
+    path = catalog_path("original", key)
+    if not path.exists():
+        return ()
+    cols = [r[0] for r in conn.execute(f"DESCRIBE FROM '{path}'").fetchall()]
+    lvls = sorted(int(c[3]) for c in cols if re.fullmatch(r"adm[1-9]_pcode", c))
+    if not lvls:
+        return ()
+    counts = ", ".join(f"count(DISTINCT adm{i}_pcode)" for i in lvls)
+    return conn.execute(f"SELECT {counts} FROM '{path}'").fetchall()[0]
 
 
 def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None]:

@@ -26,7 +26,7 @@ EGM = Product(
     src_url="https://www.mapsforeurope.org/datasets/euro-global-map",
     src_lic="EuroGeographics Open Data Licence 2024",
     src_grp="EGM",
-    gpkg="DATA/FullEurope/EuroGlobalMap_2026.gpkg",
+    gpkg="DATA/FullEurope/EuroGlobalMap_*.gpkg",
     shn=4,
     # Kept area types: 2 main, 5 coastal water; 8 (in dispute) has no codes.
     taa_keep=(2, 5),

@@ -108,9 +108,41 @@ def conform_extended(
     if not conn.execute(f"SELECT count(*) FROM '{issues}'").fetchall()[0][0]:
         return
     logger.warning("%s: coverage defects, cleaning", dest.name)
+    cut = work / f"{dest.stem}_cut.parquet"
+    _cut_enclaves(conn, dest, cut)
     clean = work / f"{dest.stem}_clean.parquet"
-    topo_clean(dest, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
+    topo_clean(cut, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
     conform(conn, f"SELECT * FROM read_parquet('{clean}')", lvl, dest)
+
+
+def _cut_enclaves(conn: duckdb.DuckDBPyConnection, src: Path, dest: Path) -> None:
+    """Write src with each unit's part lying wholly inside another unit cut from it.
+
+    topo_clean gives such an overlap to the enclosing unit; the cut keeps the exclave.
+    """
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TEMP TABLE _units AS
+        SELECT row_number() OVER () AS _rid, * FROM read_parquet('{src}');
+        CREATE OR REPLACE TEMP TABLE _cuts AS
+        SELECT o._rid, ST_Union_Agg(a.p) AS g
+        FROM (SELECT _rid, unnest(ST_Dump(geometry)).geom AS p FROM _units) a
+        JOIN _units o
+          ON a._rid <> o._rid
+         AND ST_Within(a.p, o.geometry)
+         AND ST_Area(a.p) < ST_Area(o.geometry)
+        GROUP BY o._rid;
+    """)
+    n = conn.execute("SELECT count(*) FROM _cuts").fetchall()[0][0]
+    if n:
+        logger.info("%s: cut %d enclosing unit(s) around exclaves", src.name, n)
+    conn.execute(f"""--sql
+        COPY (
+            SELECT u.* EXCLUDE (_rid) REPLACE (
+                coalesce(ST_Difference(u.geometry, c.g), u.geometry) AS geometry
+            )
+            FROM _units u LEFT JOIN _cuts c USING (_rid)
+        ) TO '{dest}' {PARQUET_OPTS}
+    """)
 
 
 def split_extended(

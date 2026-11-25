@@ -9,7 +9,7 @@ app/_01_sources/     → pull catalog/ (PORTOLAN_REMOTE), refresh cod-ab collect
 app/_02_build/       → per world-view iso3 in parallel: code its published extended layers (topo-tools code-create), edge-mosaic them to its ADM0 parent rows with their originals, package them; then write catalog/iso3/{iso3}/adm{n}_{geom}.parquet and their union catalog/global/adm{n}-{geom}/adm{n}_{geom}.parquet (geom = polygons, points, lines; mirrors the international catalog's adm0-{geom} collections)
 app/_03_export/      → tile and register the catalog/iso3/ and catalog/global/ collections with portolan (--push uploads)
 app/publish/         → shared portolan helpers (tiling, metadata, add, readme/check, push) for sources and export
-scripts/ingest_erm.py → yearly EuroGeographics ERM release into the catalog/source/ collections published from erm (`uv run python -m scripts.ingest_erm <FullEurope dir>`)
+scripts/ingest_erm.py, scripts/ingest_egm.py → yearly EuroGeographics ERM or EGM release into the catalog/source/ collections published from erm or egm (`uv run python -m scripts.ingest_erm <FullEurope dir>`, `uv run python -m scripts.ingest_egm <euro-global-map-GPKG dir>`); `--icc` also writes a listed country with no collection or one from a lower src (`adopt`), both sharing `scripts/_ebm.py`
 ```
 
 Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step sources` (or `build`, `export`); also honors `STEP` env var.
@@ -18,15 +18,16 @@ Entry point: `uv run -m app` (all stages). Single stage: `uv run -m app --step s
 
 `catalog/` is the portolan catalog published to `source.coop/fieldmaps/subnational` and the source of truth. `source/{base}/` holds one source's layers per base iso3; `iso3/{iso3}/` holds the edge-matched layers of one world-view iso3 (`iso3` of `parent.parquet`) for levels 1 to 4, and `global/adm{n}-{geom}/` their union, one collection per layer. `adm{n}_polygons` carry every admin column for levels 0..n and the `src_*` source metadata columns except `src_lang*`, `area_sqkm` (Equal Earth) and `level`, the deepest real level a unit represents (its source depth up to n, 0 for an ADM0 fill); `adm{n}_points` (`id, name..name3, pcode, level`, the polygon's `level`) and `adm{n}_lines` (`level` 1..n, each line once at the coarsest level it bounds, `a_iso3`/`b_iso3` world-view iso3 of each side, `a_`/`b_` id, names and pcode labelled at the line's own level) are lean and pair with the international ADM0 layers for country columns, coastlines and borders. Each `source/{base}/` collection has:
 
-- `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; for cod-ab, `PARTS` (`app/config.py`) lists them and step 1 splits the original by part and extends each.
+- `{key}_{tier}.parquet`: one layer per tier, GeoParquet 2.0 (no bbox covering column). An iso3 whose units span several ADM0 clip parts has one extended layer per part (`geo_1_extended`, `geo_2_extended`) beside the single `{base}_original.parquet`; `PARTS` (`app/config.py`) lists them, and the cod-ab refresh and `scripts/_ebm.py` split the original by part and extend each (`split_extended`).
 - `{base}_metadata.json`: one source-metadata row per (`key`, `tier`) (`src_*`, `via`, `via_checksum`), the only record of it. `SOURCES_SQL` in `app/_01_sources/schema.py` reads every sidecar as one table.
 - Both tiers use the cod-ab extended schema for every source (`adm{n}_name..name3, adm{n}_pcode` for n = lvl..0, then `valid_from, valid_to, version, lang..lang3, iso2, iso3, geometry`), defined in `app/_01_sources/schema.py`.
-- `original` tier: the source's own geometry (for `erm`, its units dissolved before extension); `extended` tier: that layer extended past its coastline, written as a clean coverage by `conform_extended` (`app/_01_sources/schema.py`: topo-tools `topo_detect`, then `topo_clean` on any defect).
+- `original` tier: the source's own geometry (for `erm` and `egm`, its units dissolved before extension); `extended` tier: that layer extended past its coastline, written as a clean coverage by `conform_extended` (`app/_01_sources/schema.py`: topo-tools `topo_detect`, then `topo_clean` on any defect).
 
 | `src`           | Upstream                                     | Refresh                          |
 | --------------- | -------------------------------------------- | -------------------------------- |
 | `cod-ab`        | `source.coop/hdx/cod-ab`, latest `cod_ab:admin_level_full` layer; `src_*` from the `cod_ab:*` properties of `original/{iso3}/latest/catalog.json` | every step 1 run when those properties or the upstream `file:checksum` change; replaces any other src except the iso3s in `KEEP` (`app/config.py`); kept if removed upstream |
-| `erm`           | EuroGeographics EuroRegionalMap (manual download) | `scripts/ingest_erm.py` per yearly release |
+| `erm`           | EuroGeographics EuroRegionalMap (manual download) | `scripts/ingest_erm.py` per yearly release; replaces `egm` and the frozen srcs |
+| `egm`           | EuroGeographics EuroGlobalMap (manual download); Serbia from `PolbndA_optionRS` | `scripts/ingest_egm.py` per yearly release; replaces the frozen srcs |
 | `cod-ab-legacy` | `data.fieldmaps.io/cod.json`                 | frozen                           |
 | `geoboundaries` | `data.fieldmaps.io/geoboundaries.json`       | frozen                           |
 

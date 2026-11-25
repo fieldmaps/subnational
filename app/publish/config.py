@@ -34,19 +34,19 @@ TIERS = {
 SRC_NAMES = {
     "cod-ab": "OCHA COD-AB (Source Cooperative)",
     "erm": "EuroGeographics EuroRegionalMap",
+    "egm": "EuroGeographics EuroGlobalMap",
     "cod-ab-legacy": "OCHA COD-AB (legacy FieldMaps copy)",
     "geoboundaries": "geoBoundaries (legacy FieldMaps copy)",
 }
+_EUROGEOGRAPHICS = (
+    "This dataset includes Intellectual Property "
+    "from European National Mapping and Cadastral Authorities and is licensed "
+    "on behalf of these by EuroGeographics. Original dataset is available for "
+    "free at https://www.mapsforeurope.org. Terms of the licence available at "
+    "https://www.mapsforeurope.org/licence."
+)
 # Attribution each collection of that src must carry.
-SRC_NOTICES = {
-    "erm": (
-        "This dataset includes Intellectual Property "
-        "from European National Mapping and Cadastral Authorities and is licensed "
-        "on behalf of these by EuroGeographics. Original dataset is available for "
-        "free at https://www.mapsforeurope.org. Terms of the licence available at "
-        "https://www.mapsforeurope.org/licence."
-    ),
-}
+SRC_NOTICES = {"erm": _EUROGEOGRAPHICS, "egm": _EUROGEOGRAPHICS}
 
 SPDX = {
     "ODbL-1.0": "ODbL-1.0",

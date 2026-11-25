@@ -4,394 +4,17 @@ Run: uv run python -m scripts.ingest_erm ~/Downloads/FullEurope [--icc DE,FR]
 """
 
 import re
-from argparse import ArgumentParser
 from datetime import date
-from logging import getLogger
 from pathlib import Path
-from typing import NamedTuple
 
-import duckdb
-from topo_tools.api import edge_extend
-
-from app._01_sources._01b_publish import publish
-from app._01_sources.config import DOWNLOAD_DIR
-from app._01_sources.schema import LATIN, conform, conform_extended, write_meta
-from app._01_sources.utils import catalog_path, meta_path, published_src
-from app.adm0 import ADM0_HUMANITARIAN, adm0_path
-from app.config import MAX_LVL, PARQUET_OPTS
-from app.utils import get_conn
-
-logger = getLogger(__name__)
-
-SRC = "erm"
-WORK_DIR = DOWNLOAD_DIR / SRC
-SRC_URL = "https://www.mapsforeurope.org/datasets/euro-regional-map"
-SRC_LIC = "EuroGeographics Open Data Licence 2024"
-# Kept area types: 1 main, 3 branch, 4 special, 5 coastal water, 7 inland water.
-TAA_KEEP = (1, 3, 4, 5, 7)
-TAA_COASTAL = 5
-# ERM ICC folded into another country's layer.
-MERGE = {"ND": "GB"}
-# ERM ICC whose units under one adm1 code form another ISO country: (iso2, name).
-SPLIT = {"FI": {"FI72100000": ("AX", "Åland Islands")}}
-# ERM orders (USE 2..6) left out, matching Mapbox Boundaries v4.7 levels.
-SKIP = {
-    "DE": {3, 5},
-    "FR": {5},
-    "GF": {5},
-    "GP": {5},
-    "MQ": {5},
-    "RE": {5},
-    "YT": {5},
-    "GB": {5},
-    "CY": {4},
-    "FI": {2, 4},
-    "IE": {2},
-    "PT": {2},
-}
-# ISO 639-2/B to the ISO 639-1 codes cod-ab uses; others keep their 3 letters.
-LANGS = {
-    "alb": "sq", "baq": "eu", "cat": "ca", "cze": "cs", "dan": "da",
-    "dut": "nl", "eng": "en", "est": "et", "fao": "fo", "fin": "fi",
-    "fre": "fr", "fry": "fy", "geo": "ka", "ger": "de", "gla": "gd",
-    "gle": "ga", "gre": "el", "hrv": "hr", "ice": "is", "ita": "it",
-    "lav": "lv", "lit": "lt", "mkd": "mk", "mlt": "mt", "nor": "no",
-    "pol": "pl", "por": "pt", "roh": "rm", "rum": "ro", "slo": "sk",
-    "slv": "sl", "spa": "es", "swe": "sv", "ukr": "uk", "val": "ca",
-    "wel": "cy",
-}  # fmt: skip
-
-
-class Layer(NamedTuple):
-    """One output layer: ERM ICC or SPLIT iso2, iso3, adm0 names, languages, date."""
-
-    icc: str
-    iso3: str
-    adm0: tuple
-    langs: list
-    valid_from: date | None
-
+from scripts._ebm import Product, run
 
 _ORG = re.compile(r"<gmd:organisationName>\s*<gco:CharacterString>([^<]+)")
 _STAMP = re.compile(r"<gmd:dateStamp>\s*<gco:Date>([^<]+)")
 
 
-def main() -> None:
-    """Rewrite catalog/source/{base}/ for every ERM country published from erm."""
-    parser = ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path)
-    parser.add_argument("--icc", type=lambda v: set(v.split(",")), default=None)
-    parser.add_argument("--skip-publish", action="store_true")
-    args = parser.parse_args()
-    WORK_DIR.mkdir(parents=True, exist_ok=True)
-    conn = get_conn()
-    _load(conn, args.root)
-    iso3 = dict(
-        conn.execute(
-            "SELECT DISTINCT iso2, iso3 FROM read_parquet(?)",
-            [adm0_path(ADM0_HUMANITARIAN)],
-        ).fetchall()
-    )
-    countries = [
-        r[0] for r in conn.execute("SELECT DISTINCT cc FROM k ORDER BY cc").fetchall()
-    ]
-    for cc in countries:
-        published = published_src(iso3[cc].lower()) == SRC
-        if published and (args.icc is None or cc in args.icc):
-            _country(conn, args.root, cc, iso3)
-    conn.close()
-    if not args.skip_publish:
-        publish()
-
-
-def _load(conn: duckdb.DuckDBPyConnection, root: Path) -> None:
-    """Load the kept PolbndA pieces as `k` and split EBM_NAM names as `nam`."""
-    gpkg = root / "data" / "FullEurope" / "FullEurope.gpkg"
-    merge = " ".join(f"WHEN '{a}' THEN '{b}'" for a, b in MERGE.items())
-    langs = " ".join(f"WHEN '{a}' THEN '{b}'" for a, b in LANGS.items())
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE pa AS
-        SELECT * FROM ST_Read('{gpkg}', layer = 'PolbndA')
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE k AS
-        SELECT *, CASE ICC {merge} ELSE ICC END AS cc
-        FROM pa
-        WHERE TAA IN {TAA_KEEP} AND ICC NOT LIKE '%#%' AND ICC <> 'XX'
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE nam AS
-        SELECT
-            SHN AS code,
-            ICC AS icc,
-            string_split(NAMN, '#') AS names,
-            list_transform(string_split(NLN, '#'), lambda x:
-                CASE x {langs} WHEN 'UNK' THEN NULL ELSE x END) AS langs,
-            NULLIF(left(effectiveDate::VARCHAR, 10), '1900-01-01')::DATE AS valid_from
-        FROM ST_Read('{gpkg}', layer = 'EBM_NAM')
-    """)
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE cc_names AS
-        SELECT EuroGeographics_Country_Code AS icc, name_english_short, name_national
-        FROM ST_Read('{gpkg}', layer = 'CountryCodes')
-    """)
-
-
-def _country(
-    conn: duckdb.DuckDBPyConnection, root: Path, cc: str, iso3: dict[str, str]
-) -> None:
-    """Write original and extended layers plus metadata for cc and its SPLIT parts."""
-    present = conn.execute(
-        "SELECT "
-        + ", ".join(f"bool_or(SHN{u - 1} <> 'UNK')" for u in range(2, 7))
-        + " FROM k WHERE cc = ?",
-        [cc],
-    ).fetchall()[0]
-    orders = [
-        u
-        for u, has in zip(range(2, 7), present, strict=True)
-        if has and u not in SKIP.get(cc, set())
-    ]
-    lvl = len(orders)
-    if lvl == 0:
-        logger.info("%s: no subnational orders, skipping", cc)
-        return
-    if lvl > MAX_LVL:
-        msg = f"{cc}: {lvl} orders {orders} exceed {MAX_LVL}; add a SKIP entry"
-        raise ValueError(msg)
-    _pieces(conn, cc, orders)
-    _check(conn, cc, lvl)
-    adm0 = conn.execute(
-        "SELECT name_english_short, name_national FROM cc_names WHERE icc = ?", [cc]
-    ).fetchall()
-    split = SPLIT.get(cc, {})
-    layers = [
-        (
-            cc,
-            adm0[0] if adm0 else (None, None),
-            "NOT list_contains(?::VARCHAR[], c1)",
-            [*split],
-        )
-    ]
-    layers += [
-        (icc, (name, None), "c1 = ?", code) for code, (icc, name) in split.items()
-    ]
-    for icc, names, where, arg in layers:
-        conn.execute(
-            f"CREATE OR REPLACE TABLE pt AS SELECT * FROM p WHERE {where}", [arg]
-        )
-        layer = Layer(icc, iso3[icc], names, *_names(conn, lvl))
-        _write_extended(conn, layer, lvl)
-        _write_original(icc, layer.iso3.lower(), lvl)
-        counts = conn.execute(
-            "SELECT "
-            + ", ".join(f"count(DISTINCT c{i})" for i in range(1, lvl + 1))
-            + " FROM pt"
-        ).fetchall()[0]
-        logger.info(
-            "%s: orders %s, units per level %s, langs %s",
-            icc, orders, counts, layer.langs,
-        )  # fmt: skip
-        _write_meta(root, cc, layer, lvl)
-
-
-def _names(conn: duckdb.DuckDBPyConnection, lvl: int) -> tuple[list, date | None]:
-    """Build `un`, one name per layer language for every unit in `pt`, and the date.
-
-    Languages rank by units named in them (max 4); the first falls back to a Latin name.
-    """
-    codes = " UNION ".join(f"SELECT c{i} FROM pt" for i in range(1, lvl + 1))
-    conn.execute(f"""--sql
-        CREATE OR REPLACE TABLE un_pairs AS
-        SELECT code, i, names[i] AS name, langs[i] AS lang
-        FROM (
-            SELECT code, names, langs, unnest(generate_series(1, len(names))) AS i
-            FROM nam WHERE code IN ({codes})
-        )
-    """)
-    langs, valid_from = conn.execute(f"""--sql
-        SELECT
-            (SELECT list(lang ORDER BY n DESC, lang)[1:4] FROM (
-                SELECT lang, count(DISTINCT code) AS n FROM un_pairs
-                WHERE lang IS NOT NULL GROUP BY lang
-            )),
-            (SELECT max(valid_from) FROM nam WHERE code IN ({codes}))
-    """).fetchall()[0]
-    langs = [*(langs or []), None, None, None, None][:4]
-    first = "min_by(name, i) FILTER (lang = ${})"
-    conn.execute(
-        f"""--sql
-        CREATE OR REPLACE TABLE un AS
-        SELECT code,
-            coalesce(
-                {first.format(1)},
-                min_by(name, i) FILTER (regexp_full_match(name, '{LATIN}'))
-            ) AS n0,
-            {first.format(2)} AS n1, {first.format(3)} AS n2, {first.format(4)} AS n3
-        FROM un_pairs GROUP BY code
-    """,
-        langs,
-    )
-    return langs, valid_from
-
-
-def _pieces(conn: duckdb.DuckDBPyConnection, cc: str, orders: list[int]) -> None:
-    """Build table `p` of pieces with codes c0..c{lvl}, gaps filled from the parent.
-
-    Land gaps join the longest-border sibling, else the nearest; water needs leaf codes.
-    """
-    lvl = len(orders)
-    raw = ", ".join(
-        f"NULLIF(SHN{u - 1}, 'UNK') AS c{i}" for i, u in enumerate(orders, 1)
-    )
-    conn.execute(
-        f"""--sql
-        CREATE OR REPLACE TABLE p AS
-        SELECT row_number() OVER () AS pid, NULLIF(SHN0, 'UNK') AS c0, {raw}, geom
-        FROM k WHERE cc = ? AND TAA <> {TAA_COASTAL}
-    """,
-        [cc],
-    )
-    conn.execute(
-        f"""--sql
-        CREATE OR REPLACE TABLE p5 AS
-        SELECT NULLIF(SHN{orders[-1] - 1}, 'UNK') AS c{lvl}, geom
-        FROM k WHERE cc = ? AND TAA = {TAA_COASTAL}
-    """,
-        [cc],
-    )
-    for i in range(1, lvl + 1):
-        conn.execute(f"""--sql
-            UPDATE p SET c{i} = c{i - 1}
-            WHERE c{i} IS NULL AND c{i - 1} NOT IN (
-                SELECT c{i - 1} FROM p WHERE c{i} IS NOT NULL
-            )
-        """)
-        deeper = ", ".join(f"c{j} = n.c{j}" for j in range(i, lvl + 1))
-        conn.execute(f"""--sql
-            UPDATE p SET {deeper}
-            FROM (
-                SELECT f.pid, arg_max(
-                    n.pid, ST_Length(ST_Intersection(f.geom, n.geom))
-                ) AS nid
-                FROM p f JOIN p n
-                  ON f.c{i} IS NULL AND n.c{i} IS NOT NULL
-                 AND f.c{i - 1} = n.c{i - 1} AND ST_Intersects(f.geom, n.geom)
-                GROUP BY f.pid
-            ) AS a, p AS n
-            WHERE p.pid = a.pid AND n.pid = a.nid
-        """)
-        conn.execute(f"""--sql
-            UPDATE p SET {deeper}
-            FROM (
-                SELECT f.pid, arg_min(n.pid, ST_Distance(f.geom, n.geom)) AS nid
-                FROM p f JOIN p n
-                  ON f.c{i} IS NULL AND n.c{i} IS NOT NULL
-                 AND f.c{i - 1} = n.c{i - 1}
-                GROUP BY f.pid
-            ) AS a, p AS n
-            WHERE p.pid = a.pid AND n.pid = a.nid
-        """)
-        dropped = conn.execute(
-            f"DELETE FROM p WHERE c{i} IS NULL RETURNING pid"
-        ).fetchall()
-        if dropped:
-            logger.warning(
-                "%s: dropped %d untouched level-%d fragments", cc, len(dropped), i
-            )
-    upper = ", ".join(f"u.c{j}" for j in range(lvl))
-    kept = conn.execute(f"""--sql
-        INSERT INTO p
-        SELECT (SELECT max(pid) FROM p) + row_number() OVER (),
-            {upper}, w.c{lvl}, w.geom
-        FROM p5 w
-        JOIN (SELECT DISTINCT {", ".join(f"c{j}" for j in range(lvl + 1))} FROM p) u
-          ON u.c{lvl} = w.c{lvl}
-    """).fetchall()[0][0]
-    total = conn.execute("SELECT count(*) FROM p5").fetchall()[0][0]
-    if total:
-        logger.info("%s: kept %d of %d coastal water pieces", cc, kept, total)
-
-
-def _check(conn: duckdb.DuckDBPyConnection, cc: str, lvl: int) -> None:
-    """Raise unless every piece has a country code, nests cleanly, and has names."""
-    if conn.execute("SELECT count(*) FROM p WHERE c0 IS NULL").fetchall()[0][0]:
-        msg = f"{cc}: pieces with no country code"
-        raise ValueError(msg)
-    for i in range(1, lvl + 1):
-        bad = conn.execute(
-            f"SELECT c{i} FROM p GROUP BY c{i} "
-            f"HAVING count(DISTINCT c{i - 1}) > 1 LIMIT 5"
-        ).fetchall()
-        if bad:
-            msg = f"{cc}: level {i} units with several parents: {bad}"
-            raise ValueError(msg)
-    union = " UNION ".join(f"SELECT c{i} AS code FROM p" for i in range(1, lvl + 1))
-    missing = conn.execute(
-        f"SELECT code FROM ({union}) WHERE code NOT IN (SELECT code FROM nam) LIMIT 5"
-    ).fetchall()
-    if missing:
-        msg = f"{cc}: codes with no EBM_NAM name: {missing}"
-        raise ValueError(msg)
-
-
-def _write_extended(conn: duckdb.DuckDBPyConnection, layer: Layer, lvl: int) -> None:
-    """Dissolve `pt` per leaf, reproject, extend with topo-tools, then conform."""
-    group = ", ".join(f"c{i}" for i in range(1, lvl + 1))
-    levels = ", ".join(
-        f"n{i}.n0 AS adm{i}_name, n{i}.n1 AS adm{i}_name1, "
-        f"n{i}.n2 AS adm{i}_name2, n{i}.n3 AS adm{i}_name3, "
-        f"d.c{i} AS adm{i}_pcode"
-        for i in range(1, lvl + 1)
-    )
-    joins = " ".join(f"JOIN un n{i} ON n{i}.code = d.c{i}" for i in range(1, lvl + 1))
-    raw = WORK_DIR / f"{layer.icc}.parquet"
-    conn.execute(
-        f"""--sql
-        COPY (
-            WITH d AS (
-                SELECT {group}, ST_Transform(
-                    ST_MakeValid(ST_Union_Agg(geom)), 'EPSG:4258', 'EPSG:4326', true
-                ) AS geom
-                FROM pt
-                GROUP BY {group}
-            )
-            SELECT {levels},
-                ?::VARCHAR AS adm0_name, ?::VARCHAR AS adm0_name1, ? AS adm0_pcode,
-                ?::VARCHAR AS lang, ?::VARCHAR AS lang1,
-                ?::VARCHAR AS lang2, ?::VARCHAR AS lang3,
-                ?::DATE AS valid_from,
-                ? AS iso2, ? AS iso3, d.geom AS geometry
-            FROM d {joins}
-        ) TO '{raw}' {PARQUET_OPTS}
-    """,
-        [*layer.adm0, layer.icc, *layer.langs, layer.valid_from, layer.icc, layer.iso3],
-    )
-    extended = WORK_DIR / f"{layer.icc}_extended.parquet"
-    edge_extend(raw, extended)
-    conform_extended(
-        conn,
-        f"SELECT * FROM read_parquet('{extended}')",
-        lvl,
-        catalog_path("extended", layer.iso3.lower()),
-    )
-
-
-def _write_original(cc: str, key: str, lvl: int) -> None:
-    """Write the dissolved, unextended layer in the extended schema as `original`."""
-    with duckdb.connect() as conn:
-        conn.execute("LOAD spatial")
-        conform(
-            conn,
-            f"SELECT * FROM read_parquet('{WORK_DIR / f'{cc}.parquet'}')",
-            lvl,
-            catalog_path("original", key),
-        )
-
-
-def _write_meta(root: Path, cc: str, layer: Layer, lvl: int) -> None:
-    """Write both tiers' metadata rows, naming each ICC's mapping agency."""
-    iccs = [cc, *(a for a, b in MERGE.items() if b == cc)]
+def _agencies(root: Path, iccs: list[str]) -> tuple[list[str], list[date]]:
+    """Return each ICC's mapping agency and metadata date from its country XML."""
     agencies, stamps = [], []
     for icc in iccs:
         xml = next((root / "Metadata" / "Countries").glob(f"{icc}_ERM_*_Metadata.xml"))
@@ -400,26 +23,42 @@ def _write_meta(root: Path, cc: str, layer: Layer, lvl: int) -> None:
             agencies.append(org[1].strip())
         if stamp := _STAMP.search(text):
             stamps.append(date.fromisoformat(stamp[1].strip()[:10]))
-    row = {
-        "key": layer.iso3.lower(),
-        "iso3": layer.iso3,
-        "src": SRC,
-        "src_lvl": lvl,
-        "src_lang": layer.langs[0],
-        "src_lang1": layer.langs[1],
-        "src_lang2": layer.langs[2],
-        "src_date": layer.valid_from,
-        "src_update": max(stamps, default=None),
-        "src_name": "; ".join(agencies) or None,
-        "src_name1": "EuroGeographics",
-        "src_lic": SRC_LIC,
-        "src_url": SRC_URL,
-        "src_grp": "ERM",
-        "via": SRC_URL,
-    }
-    for tier in ("extended", "original"):
-        write_meta({**row, "tier": tier}, meta_path(layer.iso3.lower()))
+    return agencies, stamps
 
+
+ERM = Product(
+    src="erm",
+    src_url="https://www.mapsforeurope.org/datasets/euro-regional-map",
+    src_lic="EuroGeographics Open Data Licence 2024",
+    src_grp="ERM",
+    gpkg="data/FullEurope/FullEurope.gpkg",
+    shn=5,
+    # Kept area types: 1 main, 3 branch, 4 special, 5 coastal water, 7 inland water.
+    taa_keep=(1, 3, 4, 5, 7),
+    taa_coastal=5,
+    # ERM orders (USE 2..6) left out, matching Mapbox Boundaries v4.7 levels.
+    skip={
+        "DE": {3, 5},
+        "FR": {5},
+        "GF": {5},
+        "GP": {5},
+        "MQ": {5},
+        "RE": {5},
+        "YT": {5},
+        "GB": {5},
+        "CY": {4},
+        "FI": {2, 4},
+        "IE": {2},
+        "PT": {2},
+    },
+    # ERM ICC folded into another country's layer.
+    merge={"ND": "GB"},
+    # ERM ICC whose units under one adm1 code form another ISO country: (iso2, name).
+    split={"FI": {"FI72100000": ("AX", "Åland Islands")}},
+    extra={},
+    agencies=_agencies,
+    adopt={"egm", "cod-ab-legacy", "geoboundaries"},
+)
 
 if __name__ == "__main__":
-    main()
+    run(ERM, __doc__)

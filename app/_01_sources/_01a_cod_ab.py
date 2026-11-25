@@ -5,10 +5,8 @@ from logging import getLogger
 from pathlib import Path
 
 import duckdb
-from topo_tools.api import edge_extend
 
-from app.adm0 import adm0_clip_sql
-from app.config import KEEP, MAX_LVL, PARQUET_OPTS, PARTS
+from app.config import KEEP, MAX_LVL, PARTS
 from app.publish.utils import portolan
 
 from .config import (
@@ -18,7 +16,7 @@ from .config import (
     DOWNLOAD_DIR,
     SRC,
 )
-from .schema import conform, conform_extended, write_meta
+from .schema import conform, conform_extended, split_extended, write_meta
 from .utils import catalog_path, download, get_json, meta_path, published_src
 
 logger = getLogger(__name__)
@@ -87,7 +85,7 @@ def load_cod_ab(conn: duckdb.DuckDBPyConnection) -> None:
         )
         conform(conn, original, lvl, catalog_path("original", key))
         if len(parts) > 1:
-            _split(conn, original, lvl, parts)
+            split_extended(conn, original, lvl, parts, DOWNLOAD_DIR / SRC / "split")
         else:
             extended = f"SELECT * FROM read_parquet('{paths['extended']}')"
             conform_extended(conn, extended, lvl, catalog_path("extended", ext_keys[0]))
@@ -128,30 +126,6 @@ def _drop_stale(key: str, rows: dict[tuple[str, str], dict]) -> None:
             portolan("rm", "-f", f"source/{key}/{f.name}")
     keep = [r for r in have if (r["tier"], r["key"]) in rows]
     path.write_text(json.dumps({"rows": keep}, indent=2) + "\n")
-
-
-def _split(
-    conn: duckdb.DuckDBPyConnection, original: str, lvl: int, parts: tuple
-) -> None:
-    """Write one extended layer per ADM0 clip part from the units inside it."""
-    for part in parts:
-        subset = DOWNLOAD_DIR / SRC / "split" / f"{part.lower()}.parquet"
-        subset.parent.mkdir(parents=True, exist_ok=True)
-        conn.execute(
-            f"""--sql
-            COPY (
-                SELECT o.* FROM ({original}) o
-                JOIN ({adm0_clip_sql()}) a
-                  ON a.adm0_src = ?
-                 AND ST_Within(ST_PointOnSurface(o.geometry), a.geometry)
-            ) TO '{subset}' {PARQUET_OPTS}
-        """,
-            [part],
-        )
-        extended = subset.with_name(f"{part.lower()}_extended.parquet")
-        edge_extend(subset, extended)
-        select = f"SELECT * FROM read_parquet('{extended}')"
-        conform_extended(conn, select, lvl, catalog_path("extended", part.lower()))
 
 
 def _data(coll: dict) -> dict:

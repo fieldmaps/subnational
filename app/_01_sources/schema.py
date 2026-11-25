@@ -5,9 +5,12 @@ from logging import getLogger
 from pathlib import Path
 
 import duckdb
-from topo_tools.api import topo_clean, topo_detect
+from topo_tools.api import edge_extend, topo_clean, topo_detect
 
+from app.adm0 import adm0_clip_sql
 from app.config import CATALOG_DIR, PARQUET_OPTS, TMP_DIR
+
+from .utils import catalog_path
 
 logger = getLogger(__name__)
 
@@ -108,6 +111,30 @@ def conform_extended(
     clean = work / f"{dest.stem}_clean.parquet"
     topo_clean(dest, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
     conform(conn, f"SELECT * FROM read_parquet('{clean}')", lvl, dest)
+
+
+def split_extended(
+    conn: duckdb.DuckDBPyConnection, original: str, lvl: int, parts: tuple, work: Path
+) -> None:
+    """Write one extended layer per ADM0 clip part from the units inside it."""
+    work.mkdir(parents=True, exist_ok=True)
+    for part in parts:
+        subset = work / f"{part.lower()}.parquet"
+        conn.execute(
+            f"""--sql
+            COPY (
+                SELECT o.* FROM ({original}) o
+                JOIN ({adm0_clip_sql()}) a
+                  ON a.adm0_src = ?
+                 AND ST_Within(ST_PointOnSurface(o.geometry), a.geometry)
+            ) TO '{subset}' {PARQUET_OPTS}
+        """,
+            [part],
+        )
+        extended = subset.with_name(f"{part.lower()}_extended.parquet")
+        edge_extend(subset, extended)
+        select = f"SELECT * FROM read_parquet('{extended}')"
+        conform_extended(conn, select, lvl, catalog_path("extended", part.lower()))
 
 
 def write_meta(meta: dict, dest: Path) -> None:

@@ -124,12 +124,15 @@ def _cut_enclaves(conn: duckdb.DuckDBPyConnection, src: Path, dest: Path) -> Non
         CREATE OR REPLACE TEMP TABLE _units AS
         SELECT row_number() OVER () AS _rid, * FROM read_parquet('{src}');
         CREATE OR REPLACE TEMP TABLE _cuts AS
+        WITH parts AS (
+            SELECT _rid, unnest(ST_Dump(geometry)).geom AS p FROM _units
+        )
         SELECT o._rid, ST_Union_Agg(a.p) AS g
-        FROM (SELECT _rid, unnest(ST_Dump(geometry)).geom AS p FROM _units) a
-        JOIN _units o
+        FROM parts a
+        JOIN parts o
           ON a._rid <> o._rid
-         AND ST_Within(a.p, o.geometry)
-         AND ST_Area(a.p) < ST_Area(o.geometry)
+         AND ST_Within(a.p, o.p)
+         AND NOT ST_Within(o.p, a.p)
         GROUP BY o._rid;
     """)
     n = conn.execute("SELECT count(*) FROM _cuts").fetchall()[0][0]

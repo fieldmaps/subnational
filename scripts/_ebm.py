@@ -121,13 +121,19 @@ def _select(
             return
         for key in keys:
             if (other := published_src(key)) in product.adopt:
-                logger.info("%s: replacing %s with %s", key, other, product.src)
+                logger.info(
+                    "%s: replacing %s (units per level %s) with %s",
+                    key, other, _published_counts(conn, key), product.src,
+                )  # fmt: skip
                 portolan("rm", "-f", f"source/{key}")
         _country(conn, product, args.root, cc, iso3)
     elif named:
         logger.info("%s: published from %s, skipping", cc, src)
     elif adoptable and _orders(conn, product, cc):
-        logger.info("%s: adoption candidate over %s, pass --icc %s", cc, src, cc)
+        logger.info(
+            "%s: adoption candidate over %s (units per level %s), pass --icc %s",
+            cc, src, _published_counts(conn, keys[0]), cc,
+        )  # fmt: skip
 
 
 def _load(conn: duckdb.DuckDBPyConnection, product: Product, root: Path) -> None:

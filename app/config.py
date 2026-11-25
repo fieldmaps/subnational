@@ -28,8 +28,13 @@ CATALOG_DIR = PKG_DIR.parent / "catalog"
 
 # iso3s whose published layer cod-ab must not replace (deeper, matches Mapbox).
 KEEP = {"mda", "pol", "svk"}
-# cod-ab iso3s published as one extended layer per ADM0 clip part.
-PARTS = {"geo": ("GEO_1", "GEO_2", "GEO_3"), "jam": ("JAM_1",), "zaf": ("ZAF_1",)}
+# iso3s published as one extended layer per ADM0 clip part.
+PARTS = {
+    "geo": ("GEO_1", "GEO_2", "GEO_3"),
+    "jam": ("JAM_1",),
+    "srb": ("SRB_1", "SRB_2", "SRB_3"),
+    "zaf": ("ZAF_1",),
+}
 TIERS = ("extended", "original")
 MAX_LVL = 4
 

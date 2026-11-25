@@ -5,9 +5,12 @@ from logging import getLogger
 from pathlib import Path
 
 import duckdb
-from topo_tools.api import topo_clean, topo_detect
+from topo_tools.api import edge_extend, topo_clean, topo_detect
 
+from app.adm0 import adm0_clip_sql
 from app.config import CATALOG_DIR, PARQUET_OPTS, TMP_DIR
+
+from .utils import catalog_path
 
 logger = getLogger(__name__)
 
@@ -105,9 +108,68 @@ def conform_extended(
     if not conn.execute(f"SELECT count(*) FROM '{issues}'").fetchall()[0][0]:
         return
     logger.warning("%s: coverage defects, cleaning", dest.name)
+    cut = work / f"{dest.stem}_cut.parquet"
+    _cut_enclaves(conn, dest, cut)
     clean = work / f"{dest.stem}_clean.parquet"
-    topo_clean(dest, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
+    topo_clean(cut, clean, work / f"{dest.stem}_clean_issues.parquet", threads=4)
     conform(conn, f"SELECT * FROM read_parquet('{clean}')", lvl, dest)
+
+
+def _cut_enclaves(conn: duckdb.DuckDBPyConnection, src: Path, dest: Path) -> None:
+    """Write src with each unit's part lying wholly inside another unit cut from it.
+
+    topo_clean gives such an overlap to the enclosing unit; the cut keeps the exclave.
+    """
+    conn.execute(f"""--sql
+        CREATE OR REPLACE TEMP TABLE _units AS
+        SELECT row_number() OVER () AS _rid, * FROM read_parquet('{src}');
+        CREATE OR REPLACE TEMP TABLE _cuts AS
+        WITH parts AS (
+            SELECT _rid, unnest(ST_Dump(geometry)).geom AS p FROM _units
+        )
+        SELECT o._rid, ST_Union_Agg(a.p) AS g
+        FROM parts a
+        JOIN parts o
+          ON a._rid <> o._rid
+         AND ST_Within(a.p, o.p)
+         AND NOT ST_Within(o.p, a.p)
+        GROUP BY o._rid;
+    """)
+    n = conn.execute("SELECT count(*) FROM _cuts").fetchall()[0][0]
+    if n:
+        logger.info("%s: cut %d enclosing unit(s) around exclaves", src.name, n)
+    conn.execute(f"""--sql
+        COPY (
+            SELECT u.* EXCLUDE (_rid) REPLACE (
+                coalesce(ST_Difference(u.geometry, c.g), u.geometry) AS geometry
+            )
+            FROM _units u LEFT JOIN _cuts c USING (_rid)
+        ) TO '{dest}' {PARQUET_OPTS}
+    """)
+
+
+def split_extended(
+    conn: duckdb.DuckDBPyConnection, original: str, lvl: int, parts: tuple, work: Path
+) -> None:
+    """Write one extended layer per ADM0 clip part from the units inside it."""
+    work.mkdir(parents=True, exist_ok=True)
+    for part in parts:
+        subset = work / f"{part.lower()}.parquet"
+        conn.execute(
+            f"""--sql
+            COPY (
+                SELECT o.* FROM ({original}) o
+                JOIN ({adm0_clip_sql()}) a
+                  ON a.adm0_src = ?
+                 AND ST_Within(ST_PointOnSurface(o.geometry), a.geometry)
+            ) TO '{subset}' {PARQUET_OPTS}
+        """,
+            [part],
+        )
+        extended = subset.with_name(f"{part.lower()}_extended.parquet")
+        edge_extend(subset, extended)
+        select = f"SELECT * FROM read_parquet('{extended}')"
+        conform_extended(conn, select, lvl, catalog_path("extended", part.lower()))
 
 
 def write_meta(meta: dict, dest: Path) -> None:
